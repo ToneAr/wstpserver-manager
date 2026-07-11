@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wolfram-wstpserver-tray"
-version = "0.1.0"
+version = "0.5.0"
 description = "PyQt6 tray application for managing Wolfram WSTPServer kernel pools"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,6 +21,9 @@ wstpserver-tray = "wolfram_pool_tray.cli:main"
 package = [
     "pyinstaller>=6.0",
 ]
+test = [
+    "pytest>=8",
+]
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -30,3 +33,6 @@ wolfram_pool_tray = ["assets/*.svg"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

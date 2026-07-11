@@ -6,6 +6,7 @@ import plistlib
 import platform
 import re
 import shutil
+import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,12 +41,32 @@ class ServicePaths:
 
 
 @dataclass(frozen=True)
+class KernelProcess:
+    pid: int
+    parent_pid: int | None
+    cpu_percent: float | None
+    memory_bytes: int | None
+    executable: str
+    command: str
+
+    @property
+    def is_subkernel(self) -> bool:
+        return "-subkernel" in self.command.split()
+
+
+@dataclass(frozen=True)
 class ServiceStatus:
     installed: bool
     running: bool
     enabled: bool | None
     detail: str
-    kernel_process_count: int | None = None
+    kernel_processes: tuple[KernelProcess, ...] | None = None
+
+    @property
+    def kernel_process_count(self) -> int | None:
+        if self.kernel_processes is None:
+            return None
+        return len(self.kernel_processes)
 
 
 @dataclass(frozen=True)
@@ -113,8 +134,23 @@ class BaseServiceManager:
         self.stop()
         return self.start()
 
-    def kernel_process_count(self) -> int | None:
+    def kernel_processes(self) -> tuple[KernelProcess, ...] | None:
         return None
+
+    def signal_kernel_process(self, pid: int, *, force: bool = False) -> str:
+        processes = self.kernel_processes()
+        if processes is None:
+            raise ServiceError("Kernel process management is not supported on this platform.")
+        process = next((candidate for candidate in processes if candidate.pid == pid), None)
+        if process is None:
+            raise ServiceError(f"Kernel process is no longer running under WSTPServer: {pid}")
+        self._signal_process(pid, force=force)
+        signal_name = "SIGKILL" if force else "SIGTERM"
+        return f"Sent {signal_name} to kernel process {pid}."
+
+    def _signal_process(self, pid: int, *, force: bool) -> None:
+        signum = signal.SIGKILL if force else signal.SIGTERM
+        os.kill(pid, signum)
 
     def _install(self, wstpserver_bin: Path, kernel_bin: Path) -> str:
         raise NotImplementedError
@@ -221,7 +257,7 @@ class LinuxServiceManager(BaseServiceManager):
         running = active.stdout.strip() == "active"
         enabled_value = enabled.stdout.strip() == "enabled" if installed else False
         detail = active.stdout.strip() or active.stderr.strip() or "unknown"
-        return ServiceStatus(installed, running, enabled_value, detail, self.kernel_process_count())
+        return ServiceStatus(installed, running, enabled_value, detail, self.kernel_processes())
 
     def start(self) -> str:
         self._run(("systemctl", "--user", "start", SERVICE_NAME))
@@ -235,9 +271,15 @@ class LinuxServiceManager(BaseServiceManager):
         self._run(("systemctl", "--user", "restart", SERVICE_NAME))
         return "Restarted systemd user service."
 
-    def kernel_process_count(self) -> int | None:
-        result = self._run(("pgrep", "-fc", "WolframKernel"), check=False)
-        return _parse_count(result.stdout)
+    def kernel_processes(self) -> tuple[KernelProcess, ...]:
+        pid = self._service_pid()
+        if pid is None:
+            return ()
+        return _unix_descendant_kernel_processes(pid, self._run)
+
+    def _service_pid(self) -> int | None:
+        result = self._run(("systemctl", "--user", "show", SERVICE_NAME, "--property=MainPID", "--value"), check=False)
+        return _parse_pid(result.stdout)
 
 
 class MacOSServiceManager(BaseServiceManager):
@@ -290,7 +332,7 @@ class MacOSServiceManager(BaseServiceManager):
         running = result.returncode == 0 and '"PID"' in result.stdout
         enabled = installed
         detail = "loaded" if result.returncode == 0 else "not loaded"
-        return ServiceStatus(installed, running, enabled, detail, self.kernel_process_count())
+        return ServiceStatus(installed, running, enabled, detail, self.kernel_processes())
 
     def start(self) -> str:
         paths = self.paths()
@@ -310,9 +352,18 @@ class MacOSServiceManager(BaseServiceManager):
         self.stop()
         return self.start()
 
-    def kernel_process_count(self) -> int | None:
-        result = self._run(("pgrep", "-fc", "WolframKernel"), check=False)
-        return _parse_count(result.stdout)
+    def kernel_processes(self) -> tuple[KernelProcess, ...]:
+        pid = self._service_pid()
+        if pid is None:
+            return ()
+        return _unix_descendant_kernel_processes(pid, self._run)
+
+    def _service_pid(self) -> int | None:
+        result = self._run(("launchctl", "list", LAUNCHD_LABEL), check=False)
+        match = re.search(r'"PID"\s*=\s*(\d+)', result.stdout)
+        if not match:
+            return None
+        return _parse_pid(match.group(1))
 
 
 class WindowsServiceManager(BaseServiceManager):
@@ -381,7 +432,7 @@ if ($info) {{ 'LastRunTime=' + $info.LastRunTime; 'LastTaskResult=' + $info.Last
         installed = "INSTALLED" in output
         state_match = re.search(r"State=(.+)", output)
         state = state_match.group(1).strip() if state_match else "Unknown"
-        return ServiceStatus(installed, state.lower() == "running", installed, state, self.kernel_process_count())
+        return ServiceStatus(installed, state.lower() == "running", installed, state, self.kernel_processes())
 
     def start(self) -> str:
         self._powershell(f"Start-ScheduledTask -TaskName {_ps_quote(WINDOWS_TASK_NAME)}")
@@ -395,9 +446,49 @@ if ($info) {{ 'LastRunTime=' + $info.LastRunTime; 'LastTaskResult=' + $info.Last
         self.stop()
         return self.start()
 
-    def kernel_process_count(self) -> int | None:
-        result = self._powershell("(Get-Process WolframKernel,wolfram -ErrorAction SilentlyContinue).Count", check=False)
-        return _parse_count(result.stdout)
+    def kernel_processes(self) -> tuple[KernelProcess, ...]:
+        script = """
+$processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Select-Object ProcessId,ParentProcessId,Name,CommandLine,WorkingSetSize
+$perfByPid = @{}
+Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction SilentlyContinue |
+    ForEach-Object { $perfByPid[[int]$_.IDProcess] = $_ }
+$byPid = @{}
+foreach ($process in $processes) { $byPid[[int]$process.ProcessId] = $process }
+foreach ($process in $processes) {
+    if ($process.Name -notin @('WolframKernel.exe', 'wolfram.exe')) { continue }
+    $parentId = [int]$process.ParentProcessId
+    $underWstpServer = $false
+    while ($parentId -and $byPid.ContainsKey($parentId)) {
+        $parent = $byPid[$parentId]
+        if ($parent.Name -ieq 'wstpserver.exe') {
+            $underWstpServer = $true
+            break
+        }
+        $parentId = [int]$parent.ParentProcessId
+    }
+    if ($underWstpServer) {
+        $commandLine = ''
+        if ($process.CommandLine) {
+            $commandLine = ($process.CommandLine -replace "`r|`n|`t", " ").Trim()
+        }
+        [string]::Join("`t", @(
+            $process.ProcessId,
+            $process.ParentProcessId,
+            $(if ($perfByPid.ContainsKey([int]$process.ProcessId)) { $perfByPid[[int]$process.ProcessId].PercentProcessorTime } else { '' }),
+            $(if ($process.WorkingSetSize) { $process.WorkingSetSize } else { '' }),
+            $process.Name,
+            $commandLine
+        ))
+    }
+}
+"""
+        result = self._powershell(script, check=False)
+        return _parse_kernel_process_rows(result.stdout)
+
+    def _signal_process(self, pid: int, *, force: bool) -> None:
+        force_flag = " -Force" if force else ""
+        self._powershell(f"Stop-Process -Id {pid}{force_flag}")
 
     def _powershell(self, script: str, *, check: bool = True) -> CommandResult:
         executable = "powershell.exe"
@@ -541,5 +632,109 @@ def _parse_count(value: str) -> int | None:
         return 0
     try:
         return int(value.splitlines()[-1].strip())
+    except ValueError:
+        return None
+
+
+def _parse_pid(value: str) -> int | None:
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        pid = int(value.splitlines()[-1].strip())
+    except ValueError:
+        return None
+    return pid if pid > 0 else None
+
+
+def _unix_descendant_kernel_processes(root_pid: int, run) -> tuple[KernelProcess, ...]:
+    result = run(("ps", "-axo", "pid=,ppid=,pcpu=,rss=,comm=,args="), check=False)
+    rows = _parse_ps_rows(result.stdout)
+    children_by_parent: dict[int, list[int]] = {}
+    for pid, parent_pid, _, _, _, _ in rows:
+        children_by_parent.setdefault(parent_pid, []).append(pid)
+
+    descendants: set[int] = set()
+    pending = list(children_by_parent.get(root_pid, ()))
+    while pending:
+        pid = pending.pop()
+        if pid in descendants:
+            continue
+        descendants.add(pid)
+        pending.extend(children_by_parent.get(pid, ()))
+
+    processes = []
+    for pid, parent_pid, cpu_percent, memory_bytes, executable, command in rows:
+        if pid not in descendants:
+            continue
+        if _is_wolfram_kernel_process(executable, command) and not _is_defunct_process(executable, command):
+            processes.append(KernelProcess(pid, parent_pid, cpu_percent, memory_bytes, executable, command))
+    return tuple(processes)
+
+
+def _parse_ps_rows(output: str) -> tuple[tuple[int, int, float | None, int | None, str, str], ...]:
+    rows = []
+    for line in output.splitlines():
+        parts = line.strip().split(None, 5)
+        if len(parts) < 5:
+            continue
+        try:
+            pid = int(parts[0])
+            parent_pid = int(parts[1])
+        except ValueError:
+            continue
+        cpu_percent = _parse_float(parts[2])
+        rss_kib = _parse_int(parts[3])
+        memory_bytes = rss_kib * 1024 if rss_kib is not None else None
+        executable = parts[4]
+        command = parts[5] if len(parts) == 6 else executable
+        rows.append((pid, parent_pid, cpu_percent, memory_bytes, executable, command))
+    return tuple(rows)
+
+
+def _parse_kernel_process_rows(output: str) -> tuple[KernelProcess, ...]:
+    processes = []
+    for line in output.splitlines():
+        parts = line.rstrip("\n").split("\t", 5)
+        if len(parts) < 5:
+            continue
+        try:
+            pid = int(parts[0])
+            parent_pid = int(parts[1]) if parts[1].strip() else None
+        except ValueError:
+            continue
+        cpu_percent = _parse_float(parts[2])
+        memory_bytes = _parse_int(parts[3])
+        executable = parts[4].strip()
+        command = parts[5].strip() if len(parts) == 6 and parts[5].strip() else executable
+        processes.append(KernelProcess(pid, parent_pid, cpu_percent, memory_bytes, executable, command))
+    return tuple(processes)
+
+
+def _is_wolfram_kernel_process(executable: str, command: str) -> bool:
+    haystack = f"{executable} {command}".lower()
+    return "wolframkernel" in haystack or "wolfram.exe" in haystack
+
+
+def _is_defunct_process(executable: str, command: str) -> bool:
+    return "<defunct>" in f"{executable} {command}".lower()
+
+
+def _parse_float(value: str) -> float | None:
+    value = value.strip().replace(",", ".")
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def _parse_int(value: str) -> int | None:
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        return int(value)
     except ValueError:
         return None

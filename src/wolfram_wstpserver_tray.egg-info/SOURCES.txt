@@ -23,3 +23,5 @@ src/wolfram_wstpserver_tray.egg-info/dependency_links.txt
 src/wolfram_wstpserver_tray.egg-info/entry_points.txt
 src/wolfram_wstpserver_tray.egg-info/requires.txt
 src/wolfram_wstpserver_tray.egg-info/top_level.txt
+tests/test_kernel_grid.py
+tests/test_service.py

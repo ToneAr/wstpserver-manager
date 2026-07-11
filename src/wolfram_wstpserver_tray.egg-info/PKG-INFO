@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: wolfram-wstpserver-tray
-Version: 0.1.0
+Version: 0.5.0
 Summary: PyQt6 tray application for managing Wolfram WSTPServer kernel pools
 Author: WSTPServer Manager contributors
 License: MIT
@@ -9,8 +9,10 @@ Description-Content-Type: text/markdown
 Requires-Dist: PyQt6>=6.6
 Provides-Extra: package
 Requires-Dist: pyinstaller>=6.0; extra == "package"
+Provides-Extra: test
+Requires-Dist: pytest>=8; extra == "test"
 
-# personal-project-KERNEL-SERVICE
+# WSTPServer Manager
 
 Persistent Wolfram Language Kernel Server Service
 

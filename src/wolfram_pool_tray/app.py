@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import getpass
+import re
 import sys
+import tempfile
 import traceback
 from pathlib import Path
 from typing import Any, Callable
 
-from PyQt6.QtCore import Qt, QThread, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QCloseEvent, QDesktopServices, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
+from PyQt6.QtCore import QPoint, QRect, QSize, QLockFile, Qt, QThread, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QCloseEvent, QDesktopServices, QIcon, QKeySequence, QPainter, QPalette, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -22,24 +26,166 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLayout,
     QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
+    QStyle,
     QSystemTrayIcon,
+    QHeaderView,
     QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from .config import default_config, first_pool, load_config, pools, save_config, update_first_pool
-from .service import BaseServiceManager, DetectionResult, ServiceError, get_service_manager
+from .service import BaseServiceManager, DetectionResult, KernelProcess, ServiceError, get_service_manager
 
 APP_NAME = "WSTPServer Manager"
 TRAY_ICON_PATH = Path(__file__).with_name("assets") / "spikey.svg"
+KERNEL_TABLE_ROW_HEIGHT = 40
+KERNEL_SIGNAL_BUTTON_HEIGHT = 30
+
+def build_dashboard_style(app: QApplication) -> str:
+    palette = app.palette()
+    accent = _system_accent_color(app)
+
+    window = palette.color(QPalette.ColorRole.Window)
+    window_text = palette.color(QPalette.ColorRole.WindowText)
+    base = palette.color(QPalette.ColorRole.Base)
+    text = palette.color(QPalette.ColorRole.Text)
+    button = palette.color(QPalette.ColorRole.Button)
+    button_text = palette.color(QPalette.ColorRole.ButtonText)
+    alternate_base = palette.color(QPalette.ColorRole.AlternateBase)
+    mid = palette.color(QPalette.ColorRole.Mid)
+    placeholder = palette.color(QPalette.ColorRole.PlaceholderText)
+    disabled_button = palette.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Button)
+    disabled_button_text = palette.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText)
+    disabled_mid = palette.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Mid)
+
+    is_dark = window.lightness() < 128
+
+    accent_hex = accent.name()
+    accent_soft = _mix_colors(base, accent, 0.16).name()
+    accent_border = _mix_colors(mid, accent, 0.55).name()
+    accent_hover = _mix_colors(button, accent, 0.22).name()
+    accent_pressed = _mix_colors(button, accent, 0.38).name()
+    accent_focus = (accent.lighter(130) if is_dark else accent.darker(115)).name()
+    accent_separator = _mix_colors(mid, accent, 0.30).name()
+
+    window_hex = window.name()
+    window_text_hex = window_text.name()
+    base_hex = base.name()
+    text_hex = text.name()
+    button_hex = button.name()
+    button_text_hex = button_text.name()
+    alternate_base_hex = alternate_base.name()
+    mid_hex = mid.name()
+    placeholder_hex = placeholder.name()
+    disabled_button_hex = disabled_button.name()
+    disabled_button_text_hex = disabled_button_text.name()
+    disabled_mid_hex = disabled_mid.name()
+
+    return f"""
+QWidget#dashboardRoot {{
+    background: {window_hex};
+    color: {window_text_hex};
+    font-size: 13px;
+}}
+QGroupBox {{
+    background: {base_hex};
+    border: 1px solid {accent_border};
+    border-radius: 16px;
+    margin-top: 18px;
+    padding: 18px 16px 14px 16px;
+    font-weight: 700;
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 18px;
+    padding: 0 8px;
+    color: {window_text_hex};
+}}
+QLabel {{
+    color: {window_text_hex};
+}}
+QLabel#captionLabel {{
+    color: {placeholder_hex};
+    font-weight: 600;
+}}
+QLabel#pathLabel {{
+    color: {text_hex};
+    background: {accent_soft};
+    border: 1px solid {accent_border};
+    border-radius: 8px;
+    padding: 6px 8px;
+}}
+QLineEdit, QSpinBox, QComboBox, QPlainTextEdit, QTableWidget {{
+    background: {base_hex};
+    color: {text_hex};
+    border: 1px solid {mid_hex};
+    border-radius: 10px;
+    padding: 7px 9px;
+    selection-background-color: {accent_hex};
+}}
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus {{
+    border: 1px solid {accent_focus};
+}}
+QPushButton {{
+    background: {button_hex};
+    color: {button_text_hex};
+    border: 1px solid {mid_hex};
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-weight: 650;
+}}
+QPushButton:hover {{
+    background: {accent_hover};
+    border-color: {accent_border};
+}}
+QPushButton:pressed {{
+    background: {accent_pressed};
+    border-color: {accent_hex};
+}}
+QPushButton:disabled {{
+    background: {disabled_button_hex};
+    color: {disabled_button_text_hex};
+    border-color: {disabled_mid_hex};
+}}
+QTableWidget {{
+    gridline-color: {mid_hex};
+    alternate-background-color: {alternate_base_hex};
+}}
+QHeaderView::section {{
+    background: {accent_soft};
+    color: {text_hex};
+    border: 0;
+    border-right: 1px solid {accent_border};
+    padding: 7px;
+    font-weight: 700;
+}}
+QCheckBox {{
+    spacing: 8px;
+}}
+QCheckBox::indicator:checked {{
+    background: {accent_hex};
+    border: 1px solid {accent_focus};
+}}
+QFrame#separatorLine {{
+    color: {accent_separator};
+    background: {accent_separator};
+    max-height: 1px;
+}}
+"""
 
 ROOT_BOOLEAN_KEYS = (
     "AllowStealingKernels",
@@ -63,6 +209,77 @@ POOL_TEXT_KEYS = (
     "InitializationFile",
     "KernelOptions",
 )
+
+
+class FlowLayout(QLayout):
+    """A lightweight layout that wraps widgets onto new rows as width shrinks."""
+
+    def __init__(self, parent: QWidget | None = None, *, margin: int = 0, spacing: int = 8) -> None:
+        super().__init__(parent)
+        self._items: list[Any] = []
+        self.setContentsMargins(margin, margin, margin, margin)
+        self.setSpacing(spacing)
+
+    def addItem(self, a0: Any) -> None:
+        self._items.append(a0)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int) -> Any | None:
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index: int) -> Any | None:
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self) -> Qt.Orientation:
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, a0: int) -> int:
+        return self._do_layout(QRect(0, 0, a0, 0), test_only=True)
+
+    def setGeometry(self, a0: QRect) -> None:
+        super().setGeometry(a0)
+        self._do_layout(a0, test_only=False)
+
+    def sizeHint(self) -> QSize:
+        return self.minimumSize()
+
+    def minimumSize(self) -> QSize:
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        left, top, right, bottom = self.getContentsMargins()
+        size += QSize(left + right, top + bottom)
+        return size
+
+    def _do_layout(self, rect: QRect, *, test_only: bool) -> int:
+        left, top, right, bottom = self.getContentsMargins()
+        effective_rect = rect.adjusted(left, top, -right, -bottom)
+        x = effective_rect.x()
+        y = effective_rect.y()
+        line_height = 0
+        spacing = self.spacing()
+
+        for item in self._items:
+            item_size = item.sizeHint()
+            next_x = x + item_size.width() + spacing
+            if next_x - spacing > effective_rect.right() and line_height > 0:
+                x = effective_rect.x()
+                y += line_height + spacing
+                next_x = x + item_size.width() + spacing
+                line_height = 0
+
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), item_size))
+
+            x = next_x
+            line_height = max(line_height, item_size.height())
+
+        return y + line_height - rect.y() + bottom
 
 
 class OptionalBooleanCombo(QComboBox):
@@ -388,19 +605,41 @@ class MainWindow(QMainWindow):
         self.tray = tray
         self.worker: OperationThread | None = None
         self.setWindowTitle(APP_NAME)
-        self.setMinimumSize(760, 620)
+        self.resize(920, 720)
+        self.setMinimumSize(360, 360)
 
         self.status_label = QLabel("Checking…")
+        self.status_label.setObjectName("statusPill")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setMinimumWidth(120)
         self.installed_label = QLabel("—")
         self.running_label = QLabel("—")
         self.enabled_label = QLabel("—")
         self.kernel_processes_label = QLabel("—")
+        self.kernel_processes_table = QTableWidget(0, 7)
+        self._kernel_processes: tuple[KernelProcess, ...] | None = None
+        self._kernel_sort_column: int | None = None
+        self._kernel_sort_order: Qt.SortOrder = Qt.SortOrder.AscendingOrder
         self.config_path_label = QLabel(str(self.manager.paths().config_file))
+        self.config_path_label.setObjectName("pathLabel")
+        self.config_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.config_path_label.setWordWrap(True)
+        self.config_path_label.setMinimumWidth(0)
+        self.config_path_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.log_path_label = QLabel(str(self.manager.paths().log_file))
+        self.log_path_label.setObjectName("pathLabel")
+        self.log_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.log_path_label.setWordWrap(True)
+        self.log_path_label.setMinimumWidth(0)
+        self.log_path_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.platform_label = QLabel(self.manager.name)
+        self.platform_label.setWordWrap(True)
 
         self.wstpserver_edit = QLineEdit()
         self.kernel_edit = QLineEdit()
+        for path_edit in (self.wstpserver_edit, self.kernel_edit):
+            path_edit.setMinimumWidth(0)
+            path_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.pool_name_label = QLabel("—")
         self.minimum_spin = QSpinBox()
         self.minimum_spin.setRange(0, 1024)
@@ -411,19 +650,21 @@ class MainWindow(QMainWindow):
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         self.output.setMaximumBlockCount(1000)
+        self.output.setMinimumHeight(100)
 
-        self.install_button = QPushButton("Install / Update Service")
+        self.install_button = QPushButton("Install / Update")
         self.start_button = QPushButton("Start")
         self.stop_button = QPushButton("Stop")
         self.restart_button = QPushButton("Restart")
-        self.uninstall_button = QPushButton("Uninstall Service")
+        self.uninstall_button = QPushButton("Uninstall")
         self.detect_button = QPushButton("Auto-detect Binaries")
-        self.save_config_button = QPushButton("Save Kernel Pool Config")
+        self.save_config_button = QPushButton("Save Pool Config")
         self.edit_config_button = QPushButton("Edit Full Config…")
         self.edit_other_config_button = QPushButton("Edit Other Config…")
         self.refresh_button = QPushButton("Refresh")
-        self.open_config_button = QPushButton("Open Config Folder")
-        self.open_log_button = QPushButton("Open Log Folder")
+        self.open_config_button = QPushButton("Config")
+        self.open_log_button = QPushButton("Logs")
+        self._apply_button_icons()
 
         self._build_ui()
         self._connect_signals()
@@ -440,29 +681,64 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         root = QWidget()
+        root.setObjectName("dashboardRoot")
         root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(18, 18, 18, 18)
+        root_layout.setSpacing(14)
 
         summary = QGroupBox("Service status")
         summary_layout = QGridLayout(summary)
-        summary_layout.addWidget(QLabel("Platform:"), 0, 0)
-        summary_layout.addWidget(self.platform_label, 0, 1)
-        summary_layout.addWidget(QLabel("Status:"), 1, 0)
-        summary_layout.addWidget(self.status_label, 1, 1)
-        summary_layout.addWidget(QLabel("Installed:"), 2, 0)
+        summary_layout.setHorizontalSpacing(14)
+        summary_layout.setVerticalSpacing(10)
+        summary_layout.addWidget(_caption_label("Activity"), 0, 0)
+        summary_layout.addWidget(self.status_label, 0, 1)
+        summary_layout.addWidget(_caption_label("Platform"), 1, 0)
+        summary_layout.addWidget(self.platform_label, 1, 1)
+        summary_layout.addWidget(_caption_label("Installed"), 2, 0)
         summary_layout.addWidget(self.installed_label, 2, 1)
-        summary_layout.addWidget(QLabel("Running:"), 3, 0)
+        summary_layout.addWidget(_caption_label("Running"), 3, 0)
         summary_layout.addWidget(self.running_label, 3, 1)
-        summary_layout.addWidget(QLabel("Enabled at login:"), 4, 0)
+        summary_layout.addWidget(_caption_label("Enabled at login"), 4, 0)
         summary_layout.addWidget(self.enabled_label, 4, 1)
-        summary_layout.addWidget(QLabel("Detected kernel processes:"), 5, 0)
+        summary_layout.addWidget(_caption_label("Running kernels"), 5, 0)
         summary_layout.addWidget(self.kernel_processes_label, 5, 1)
-        summary_layout.addWidget(QLabel("Config:"), 6, 0)
+        summary_layout.addWidget(_caption_label("Config"), 6, 0)
         summary_layout.addWidget(self.config_path_label, 6, 1)
-        summary_layout.addWidget(QLabel("Log:"), 7, 0)
+        summary_layout.addWidget(_caption_label("Log"), 7, 0)
         summary_layout.addWidget(self.log_path_label, 7, 1)
+        summary_layout.setColumnStretch(1, 1)
         root_layout.addWidget(summary)
 
-        actions_layout = QHBoxLayout()
+        kernels = QGroupBox("Running kernels under WSTPServer")
+        kernels_layout = QVBoxLayout(kernels)
+        self.kernel_processes_table.setHorizontalHeaderLabels(("PID", "Parent PID", "CPU", "Memory", "Executable", "Command", "Signal"))
+        vertical_header = self.kernel_processes_table.verticalHeader()
+        if vertical_header is not None:
+            vertical_header.setVisible(False)
+            vertical_header.setMinimumSectionSize(KERNEL_TABLE_ROW_HEIGHT)
+            vertical_header.setDefaultSectionSize(KERNEL_TABLE_ROW_HEIGHT)
+        self.kernel_processes_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.kernel_processes_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.kernel_processes_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.kernel_processes_table.setAlternatingRowColors(True)
+        self.kernel_processes_table.setMinimumSize(0, 96)
+        self.kernel_processes_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        horizontal_header = self.kernel_processes_table.horizontalHeader()
+        if horizontal_header is not None:
+            horizontal_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            horizontal_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+            horizontal_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+            horizontal_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+            horizontal_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+            horizontal_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+            horizontal_header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+            horizontal_header.setSectionsClickable(True)
+            horizontal_header.setSortIndicatorShown(True)
+            horizontal_header.sectionClicked.connect(self._on_kernel_header_clicked)
+        kernels_layout.addWidget(self.kernel_processes_table)
+        root_layout.addWidget(kernels)
+
+        actions_layout = FlowLayout(spacing=8)
         for button in (
             self.install_button,
             self.start_button,
@@ -476,14 +752,16 @@ class MainWindow(QMainWindow):
 
         binaries = QGroupBox("Wolfram binaries")
         binaries_layout = QGridLayout(binaries)
-        binaries_layout.addWidget(QLabel("wstpserver:"), 0, 0)
+        binaries_layout.addWidget(_caption_label("wstpserver"), 0, 0)
         binaries_layout.addWidget(self.wstpserver_edit, 0, 1)
         browse_wstpserver = QPushButton("Browse…")
+        browse_wstpserver.setIcon(_standard_icon(QStyle.StandardPixmap.SP_DialogOpenButton))
         browse_wstpserver.clicked.connect(lambda: self._browse_binary(self.wstpserver_edit))
         binaries_layout.addWidget(browse_wstpserver, 0, 2)
-        binaries_layout.addWidget(QLabel("WolframKernel:"), 1, 0)
+        binaries_layout.addWidget(_caption_label("WolframKernel"), 1, 0)
         binaries_layout.addWidget(self.kernel_edit, 1, 1)
         browse_kernel = QPushButton("Browse…")
+        browse_kernel.setIcon(_standard_icon(QStyle.StandardPixmap.SP_DialogOpenButton))
         browse_kernel.clicked.connect(lambda: self._browse_binary(self.kernel_edit))
         binaries_layout.addWidget(browse_kernel, 1, 2)
         binaries_layout.addWidget(self.detect_button, 2, 1)
@@ -491,11 +769,11 @@ class MainWindow(QMainWindow):
 
         pool = QGroupBox("Kernel pool")
         pool_layout = QFormLayout(pool)
-        pool_layout.addRow("Pool:", self.pool_name_label)
-        pool_layout.addRow("Minimum kernels:", self.minimum_spin)
-        pool_layout.addRow("Maximum kernels:", self.maximum_spin)
-        pool_layout.addRow("KeepAlive:", self.keep_alive_check)
-        pool_buttons = QHBoxLayout()
+        pool_layout.addRow(_caption_label("Pool"), self.pool_name_label)
+        pool_layout.addRow(_caption_label("Minimum kernels"), self.minimum_spin)
+        pool_layout.addRow(_caption_label("Maximum kernels"), self.maximum_spin)
+        pool_layout.addRow(_caption_label("KeepAlive"), self.keep_alive_check)
+        pool_buttons = FlowLayout(spacing=8)
         pool_buttons.addWidget(self.save_config_button)
         pool_buttons.addWidget(self.edit_config_button)
         pool_buttons.addWidget(self.edit_other_config_button)
@@ -505,11 +783,35 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(pool)
 
         separator = QFrame()
+        separator.setObjectName("separatorLine")
         separator.setFrameShape(QFrame.Shape.HLine)
         root_layout.addWidget(separator)
-        root_layout.addWidget(QLabel("Operation output"))
+        root_layout.addWidget(_caption_label("Operation output"))
         root_layout.addWidget(self.output, stretch=1)
-        self.setCentralWidget(root)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setWidget(root)
+        self.setCentralWidget(scroll_area)
+
+    def _apply_button_icons(self) -> None:
+        icon_map = (
+            (self.install_button, QStyle.StandardPixmap.SP_ArrowDown),
+            (self.start_button, QStyle.StandardPixmap.SP_MediaPlay),
+            (self.stop_button, QStyle.StandardPixmap.SP_MediaStop),
+            (self.restart_button, QStyle.StandardPixmap.SP_BrowserReload),
+            (self.uninstall_button, QStyle.StandardPixmap.SP_TrashIcon),
+            (self.detect_button, QStyle.StandardPixmap.SP_FileDialogInfoView),
+            (self.save_config_button, QStyle.StandardPixmap.SP_DialogSaveButton),
+            (self.edit_config_button, QStyle.StandardPixmap.SP_FileDialogDetailedView),
+            (self.edit_other_config_button, QStyle.StandardPixmap.SP_FileIcon),
+            (self.refresh_button, QStyle.StandardPixmap.SP_BrowserReload),
+            (self.open_config_button, QStyle.StandardPixmap.SP_DirOpenIcon),
+            (self.open_log_button, QStyle.StandardPixmap.SP_FileIcon),
+        )
+        for button, pixmap in icon_map:
+            button.setIcon(_standard_icon(pixmap))
 
     def _connect_signals(self) -> None:
         self.detect_button.clicked.connect(self.detect_binaries)
@@ -627,16 +929,22 @@ class MainWindow(QMainWindow):
         try:
             status = self.manager.status()
         except Exception as exc:  # noqa: BLE001 - GUI boundary
-            self.status_label.setText("Error")
+            self._set_activity_state("red", "Error")
             self.installed_label.setText("—")
             self.running_label.setText("—")
             self.enabled_label.setText("—")
             self.kernel_processes_label.setText("—")
+            self._set_kernel_processes(None)
             self._update_tray(False, f"Status error: {exc}")
             return
-        self.status_label.setText(status.detail)
+        if status.running:
+            self._set_activity_state("green", status.detail or "Running")
+        elif status.installed:
+            self._set_activity_state("yellow", status.detail or "Installed / idle")
+        else:
+            self._set_activity_state("red", status.detail or "Not installed")
         self.installed_label.setText("Yes" if status.installed else "No")
-        self.running_label.setText("Yes" if status.running else "No")
+        self.running_label.setText("Active" if status.running else "Stopped")
         if status.enabled is None:
             self.enabled_label.setText("Unknown")
         else:
@@ -645,11 +953,161 @@ class MainWindow(QMainWindow):
             self.kernel_processes_label.setText("Unknown")
         else:
             self.kernel_processes_label.setText(str(status.kernel_process_count))
+        self._set_kernel_processes(status.kernel_processes)
         self._update_tray(status.running, status.detail)
         self.start_button.setEnabled(status.installed and not status.running)
         self.stop_button.setEnabled(status.installed and status.running)
         self.restart_button.setEnabled(status.installed)
         self.uninstall_button.setEnabled(status.installed)
+
+    def _set_activity_state(self, light: str, detail: str) -> None:
+        detail = detail.strip() or "Unknown"
+        self.status_label.setText(detail)
+        colors = {
+            "green": ("#052e1a", "#86efac", "#22c55e"),
+            "yellow": ("#2f2508", "#fde68a", "#f59e0b"),
+            "red": ("#3f1218", "#fecaca", "#ef4444"),
+        }
+        background, foreground, border = colors.get(light, colors["yellow"])
+        self.status_label.setStyleSheet(
+            "QLabel#statusPill {"
+            f"background: {background};"
+            f"color: {foreground};"
+            f"border: 1px solid {border};"
+            "border-radius: 12px;"
+            "padding: 8px 12px;"
+            "font-weight: 800;"
+            "}"
+        )
+
+    def _set_kernel_processes(self, processes: tuple[KernelProcess, ...] | None) -> None:
+        self._kernel_processes = processes
+        self._render_kernel_table()
+
+    def _render_kernel_table(self) -> None:
+        processes = self._kernel_processes
+        self.kernel_processes_table.clearSpans()
+        self.kernel_processes_table.setRowCount(0)
+        if processes is None:
+            self.kernel_processes_table.setRowCount(1)
+            item = QTableWidgetItem("Kernel process details are unavailable on this platform")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            self.kernel_processes_table.setItem(0, 0, item)
+            self.kernel_processes_table.setSpan(0, 0, 1, 7)
+            return
+        if not processes:
+            self.kernel_processes_table.setRowCount(1)
+            item = QTableWidgetItem("No running kernels detected under WSTPServer")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            self.kernel_processes_table.setItem(0, 0, item)
+            self.kernel_processes_table.setSpan(0, 0, 1, 7)
+            return
+
+        main, parallel = _split_kernel_processes(processes)
+        if self._kernel_sort_column is not None:
+            main = _sort_kernel_processes(main, self._kernel_sort_column, self._kernel_sort_order)
+            parallel = _sort_kernel_processes(parallel, self._kernel_sort_column, self._kernel_sort_order)
+
+        self._append_kernel_group_rows("Main kernels", main)
+        self._append_kernel_group_rows("Parallel kernels", parallel)
+
+    def _append_kernel_group_rows(self, title: str, processes: tuple[KernelProcess, ...]) -> None:
+        table = self.kernel_processes_table
+        divider_row = table.rowCount()
+        table.insertRow(divider_row)
+        divider_item = QTableWidgetItem(title)
+        divider_item.setFlags(divider_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        font = divider_item.font()
+        font.setBold(True)
+        divider_item.setFont(font)
+        palette = table.palette()
+        background = _mix_colors(
+            palette.color(QPalette.ColorRole.Base),
+            palette.color(QPalette.ColorRole.Mid),
+            0.35,
+        )
+        divider_item.setBackground(background)
+        table.setItem(divider_row, 0, divider_item)
+        table.setSpan(divider_row, 0, 1, 7)
+
+        if not processes:
+            placeholder_row = table.rowCount()
+            table.insertRow(placeholder_row)
+            placeholder_item = QTableWidgetItem("None")
+            placeholder_item.setFlags(placeholder_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            table.setItem(placeholder_row, 0, placeholder_item)
+            table.setSpan(placeholder_row, 0, 1, 7)
+            return
+
+        for process in processes:
+            row = table.rowCount()
+            table.insertRow(row)
+            parent_pid = "" if process.parent_pid is None else str(process.parent_pid)
+            values = (
+                str(process.pid),
+                parent_pid,
+                _format_cpu(process.cpu_percent),
+                _format_bytes(process.memory_bytes),
+                process.executable,
+                process.command,
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if column < 4:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                table.setItem(row, column, item)
+            table.setCellWidget(row, 6, self._kernel_signal_buttons(process.pid))
+
+    def _on_kernel_header_clicked(self, column: int) -> None:
+        if column == 6:
+            return
+        if self._kernel_sort_column == column:
+            self._kernel_sort_order = (
+                Qt.SortOrder.DescendingOrder
+                if self._kernel_sort_order == Qt.SortOrder.AscendingOrder
+                else Qt.SortOrder.AscendingOrder
+            )
+        else:
+            self._kernel_sort_column = column
+            self._kernel_sort_order = Qt.SortOrder.AscendingOrder
+        horizontal_header = self.kernel_processes_table.horizontalHeader()
+        if horizontal_header is not None:
+            horizontal_header.setSortIndicator(column, self._kernel_sort_order)
+        self._render_kernel_table()
+
+    def _kernel_signal_buttons(self, pid: int) -> QWidget:
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(4)
+
+        term_button = QPushButton("Term")
+        term_button.setIcon(_standard_icon(QStyle.StandardPixmap.SP_MediaStop))
+        term_button.setToolTip(f"Send SIGTERM to kernel process {pid}")
+        term_button.setFixedWidth(72)
+        term_button.setMinimumHeight(KERNEL_SIGNAL_BUTTON_HEIGHT)
+        term_button.clicked.connect(lambda _checked=False, target_pid=pid: self._signal_kernel_process(target_pid, force=False))
+        layout.addWidget(term_button)
+
+        kill_button = QPushButton("Kill")
+        kill_button.setIcon(_standard_icon(QStyle.StandardPixmap.SP_MessageBoxCritical))
+        kill_button.setToolTip(f"Send SIGKILL to kernel process {pid}")
+        kill_button.setFixedWidth(72)
+        kill_button.setMinimumHeight(KERNEL_SIGNAL_BUTTON_HEIGHT)
+        kill_button.clicked.connect(lambda _checked=False, target_pid=pid: self._signal_kernel_process(target_pid, force=True))
+        layout.addWidget(kill_button)
+        return widget
+
+    def _signal_kernel_process(self, pid: int, *, force: bool) -> None:
+        signal_name = "SIGKILL" if force else "SIGTERM"
+        choice = QMessageBox.question(
+            self,
+            f"Send {signal_name}?",
+            f"Send {signal_name} to kernel process {pid}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if choice == QMessageBox.StandardButton.Yes:
+            self._run_operation(signal_name, lambda: self.manager.signal_kernel_process(pid, force=force))
 
     def _run_operation(self, title: str, operation: Callable[[], str]) -> None:
         if self.worker and self.worker.isRunning():
@@ -717,6 +1175,35 @@ class MainWindow(QMainWindow):
             self.tray.showMessage(APP_NAME, "Still running in the system tray.", QSystemTrayIcon.MessageIcon.Information, 3000)
         elif a0 is not None:
             super().closeEvent(a0)
+
+
+def _caption_label(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName("captionLabel")
+    return label
+
+
+def _system_accent_color(app: QApplication) -> QColor:
+    # QPalette.Accent (Qt >= 6.6) is not reliably populated by every platform
+    # theme integration (observed stuck at Qt's generic default on KDE via
+    # xdg-desktop-portal), while Highlight is consistently wired to the live
+    # system accent color across platforms. Use Highlight as the source of truth.
+    return app.palette().color(QPalette.ColorRole.Highlight)
+
+
+def _mix_colors(base: QColor, overlay: QColor, overlay_ratio: float) -> QColor:
+    ratio = max(0.0, min(1.0, overlay_ratio))
+    inverse = 1.0 - ratio
+    return QColor(
+        round(base.red() * inverse + overlay.red() * ratio),
+        round(base.green() * inverse + overlay.green() * ratio),
+        round(base.blue() * inverse + overlay.blue() * ratio),
+    )
+
+
+def _standard_icon(pixmap: QStyle.StandardPixmap) -> QIcon:
+    style = QApplication.style()
+    return style.standardIcon(pixmap) if style is not None else QIcon()
 
 
 def make_icon(running: bool = False) -> QIcon:
@@ -805,12 +1292,85 @@ def _bool_from_config(value: object) -> bool:
     return bool(value)
 
 
+def _split_kernel_processes(
+    processes: tuple[KernelProcess, ...],
+) -> tuple[tuple[KernelProcess, ...], tuple[KernelProcess, ...]]:
+    main = tuple(process for process in processes if not process.is_subkernel)
+    parallel = tuple(process for process in processes if process.is_subkernel)
+    return main, parallel
+
+
+_KERNEL_SORT_KEYS: dict[int, Callable[[KernelProcess], Any]] = {
+    0: lambda process: process.pid,
+    1: lambda process: process.parent_pid,
+    2: lambda process: process.cpu_percent,
+    3: lambda process: process.memory_bytes,
+    4: lambda process: process.executable.lower(),
+    5: lambda process: process.command.lower(),
+}
+
+
+def _sort_kernel_processes(
+    processes: tuple[KernelProcess, ...], column: int, order: Qt.SortOrder
+) -> tuple[KernelProcess, ...]:
+    key = _KERNEL_SORT_KEYS.get(column)
+    if key is None:
+        return processes
+    # None always sorts last, in either direction, so reversing for
+    # descending order can't be done with a single reverse=True sort.
+    with_value = [process for process in processes if key(process) is not None]
+    without_value = [process for process in processes if key(process) is None]
+    with_value.sort(key=key, reverse=order == Qt.SortOrder.DescendingOrder)
+    return tuple(with_value + without_value)
+
+
+def _format_cpu(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.1f}%"
+
+
+def _format_bytes(value: int | None) -> str:
+    if value is None:
+        return "—"
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    amount = float(value)
+    for unit in units:
+        if amount < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(amount)} {unit}"
+            return f"{amount:.1f} {unit}"
+        amount /= 1024
+    return f"{value} B"
+
+
+def _instance_lock_path() -> Path:
+    user = re.sub(r"[^A-Za-z0-9_.-]", "_", getpass.getuser())
+    return Path(tempfile.gettempdir()) / f"wolfram-wstpserver-tray-{user}.lock"
+
+
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv if argv is None or not argv else argv)
     app_args, start_hidden = _parse_app_args(raw_argv)
     app = QApplication(app_args)
     app.setApplicationName(APP_NAME)
     app.setWindowIcon(make_icon(False))
+
+    def refresh_style(*_args: object) -> None:
+        app.setStyleSheet(build_dashboard_style(app))
+
+    refresh_style()
+    app.paletteChanged.connect(refresh_style)
+    style_hints = app.styleHints()
+    if hasattr(style_hints, "colorSchemeChanged"):
+        style_hints.colorSchemeChanged.connect(refresh_style)
+
+    instance_lock = QLockFile(str(_instance_lock_path()))
+    if not instance_lock.tryLock(0):
+        if not start_hidden:
+            QMessageBox.information(None, APP_NAME, "WSTPServer Manager is already running in the system tray.")
+        return 0
+
     app.setQuitOnLastWindowClosed(False)
     manager = get_service_manager()
     tray, window = build_tray(app, manager)
