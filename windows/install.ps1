@@ -12,8 +12,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ConfigDir  = Join-Path $env:APPDATA "wolfram-pool"
-$LogDir     = Join-Path $env:LOCALAPPDATA "wolfram-pool\logs"
+$ConfigDir  = Join-Path $env:APPDATA "wstpserver"
+$LogDir     = Join-Path $env:LOCALAPPDATA "wstpserver\logs"
 $ConfigFile = Join-Path $ConfigDir "wstpserver.conf"
 $LogFile    = Join-Path $LogDir "wstpserver.log"
 $TaskName   = "WolframKernelPool"

@@ -4,8 +4,8 @@
 set -euo pipefail
 
 UNIT_DIR="$HOME/.config/systemd/user"
-CONFIG_DIR="$HOME/.config/wolfram-pool"
-DATA_DIR="$HOME/.local/share/wolfram-pool"
+CONFIG_DIR="$HOME/.config/wstpserver"
+DATA_DIR="$HOME/.local/share/wstpserver"
 
 systemctl --user disable --now wstpserver.service 2>/dev/null || true
 rm -f "$UNIT_DIR/wstpserver.service"

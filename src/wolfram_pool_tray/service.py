@@ -169,8 +169,8 @@ class LinuxServiceManager(BaseServiceManager):
     def paths(self) -> ServicePaths:
         home = Path.home()
         return ServicePaths(
-            config_file=home / ".config" / "wolfram-pool" / "wstpserver.conf",
-            log_file=home / ".local" / "share" / "wolfram-pool" / "wstpserver.log",
+            config_file=home / ".config" / "wstpserver" / "wstpserver.conf",
+            log_file=home / ".local" / "share" / "wstpserver" / "wstpserver.log",
             service_file=home / ".config" / "systemd" / "user" / SERVICE_NAME,
         )
 
@@ -246,8 +246,8 @@ class MacOSServiceManager(BaseServiceManager):
     def paths(self) -> ServicePaths:
         home = Path.home()
         return ServicePaths(
-            config_file=home / "Library" / "Application Support" / "wolfram-pool" / "wstpserver.conf",
-            log_file=home / "Library" / "Logs" / "wolfram-pool" / "wstpserver.log",
+            config_file=home / "Library" / "Application Support" / "wstpserver" / "wstpserver.conf",
+            log_file=home / "Library" / "Logs" / "wstpserver" / "wstpserver.log",
             service_file=home / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist",
         )
 
@@ -322,8 +322,8 @@ class WindowsServiceManager(BaseServiceManager):
         appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
         local_appdata = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
         return ServicePaths(
-            config_file=appdata / "wolfram-pool" / "wstpserver.conf",
-            log_file=local_appdata / "wolfram-pool" / "logs" / "wstpserver.log",
+            config_file=appdata / "wstpserver" / "wstpserver.conf",
+            log_file=local_appdata / "wstpserver" / "logs" / "wstpserver.log",
             service_file=None,
         )
 

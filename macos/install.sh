@@ -3,8 +3,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_DIR="$HOME/Library/Application Support/wolfram-pool"
-LOG_DIR="$HOME/Library/Logs/wolfram-pool"
+CONFIG_DIR="$HOME/Library/Application Support/wstpserver"
+LOG_DIR="$HOME/Library/Logs/wstpserver"
 AGENT_DIR="$HOME/Library/LaunchAgents"
 CONFIG_FILE="$CONFIG_DIR/wstpserver.conf"
 LOG_FILE="$LOG_DIR/wstpserver.log"

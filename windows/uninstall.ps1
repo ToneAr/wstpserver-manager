@@ -11,8 +11,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $TaskName  = "WolframKernelPool"
-$ConfigDir = Join-Path $env:APPDATA "wolfram-pool"
-$LogDir    = Join-Path $env:LOCALAPPDATA "wolfram-pool\logs"
+$ConfigDir = Join-Path $env:APPDATA "wstpserver"
+$LogDir    = Join-Path $env:LOCALAPPDATA "wstpserver\logs"
 
 Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue

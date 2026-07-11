@@ -5,8 +5,8 @@ set -euo pipefail
 
 AGENT_DIR="$HOME/Library/LaunchAgents"
 PLIST_FILE="$AGENT_DIR/com.wolfram.wstpserver.plist"
-CONFIG_DIR="$HOME/Library/Application Support/wolfram-pool"
-LOG_DIR="$HOME/Library/Logs/wolfram-pool"
+CONFIG_DIR="$HOME/Library/Application Support/wstpserver"
+LOG_DIR="$HOME/Library/Logs/wstpserver"
 
 launchctl unload -w "$PLIST_FILE" 2>/dev/null || true
 rm -f "$PLIST_FILE"
