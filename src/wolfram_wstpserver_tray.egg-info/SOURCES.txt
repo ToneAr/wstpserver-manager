@@ -1,0 +1,15 @@
+MANIFEST.in
+README.md
+pyproject.toml
+src/wolfram_pool_tray/__init__.py
+src/wolfram_pool_tray/__main__.py
+src/wolfram_pool_tray/app.py
+src/wolfram_pool_tray/config.py
+src/wolfram_pool_tray/service.py
+src/wolfram_pool_tray/assets/spikey.svg
+src/wolfram_wstpserver_tray.egg-info/PKG-INFO
+src/wolfram_wstpserver_tray.egg-info/SOURCES.txt
+src/wolfram_wstpserver_tray.egg-info/dependency_links.txt
+src/wolfram_wstpserver_tray.egg-info/entry_points.txt
+src/wolfram_wstpserver_tray.egg-info/requires.txt
+src/wolfram_wstpserver_tray.egg-info/top_level.txt

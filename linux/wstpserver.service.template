@@ -1,0 +1,15 @@
+[Unit]
+Description=Wolfram Kernel Pool (WSTPServer)
+After=network.target
+
+[Service]
+ExecStart=__WSTPSERVER_BIN__ \
+    -p 31415 \
+    -i localhost \
+    -c __CONFIG_FILE__ \
+    -l 1 \
+    -f __LOG_FILE__
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

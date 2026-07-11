@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wolfram-wstpserver-tray"
+version = "0.1.0"
+description = "PyQt6 tray application for managing Wolfram WSTPServer kernel pools"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "WSTPServer Manager contributors" }]
+dependencies = [
+    "PyQt6>=6.6",
+]
+
+[project.gui-scripts]
+wstpserver-tray = "wolfram_pool_tray.app:main"
+
+[project.optional-dependencies]
+package = [
+    "pyinstaller>=6.0",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.package-data]
+wolfram_pool_tray = ["assets/*.svg"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

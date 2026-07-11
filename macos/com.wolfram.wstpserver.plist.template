@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.wolfram.wstpserver</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__WSTPSERVER_BIN__</string>
+        <string>-p</string>
+        <string>31415</string>
+        <string>-i</string>
+        <string>localhost</string>
+        <string>-c</string>
+        <string>__CONFIG_FILE__</string>
+        <string>-l</string>
+        <string>1</string>
+        <string>-f</string>
+        <string>__LOG_FILE__</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__LOG_FILE__</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG_FILE__</string>
+</dict>
+</plist>

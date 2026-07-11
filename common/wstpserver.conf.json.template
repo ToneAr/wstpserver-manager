@@ -1,0 +1,15 @@
+{
+    "AllowStealingKernels": false,
+    "AllowSilentKernelReplacement": true,
+    "EnableAutomaticKernelConnection": false,
+    "SendInputNamePacketUponKernelConnection": true,
+    "Pools": {
+        "StandardKernels": {
+            "Default": true,
+            "KernelPath": "__KERNEL_PATH__",
+            "KeepAlive": true,
+            "MinimumKernelNumber": 2,
+            "MaximumKernelNumber": 4
+        }
+    }
+}
