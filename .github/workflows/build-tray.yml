@@ -8,6 +8,9 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build ${{ matrix.os }}
@@ -55,3 +58,27 @@ jobs:
         with:
           name: WSTPServerManager-${{ runner.os }}
           path: dist/installers/*
+
+  release:
+    name: Attach installers to release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: WSTPServerManager-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Attach installers to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG_NAME" >/dev/null 2>&1 || \
+            gh release create "$TAG_NAME" --title "$TAG_NAME" --notes "Release $TAG_NAME"
+          gh release upload "$TAG_NAME" release-assets/* --clobber
