@@ -25,7 +25,7 @@ on `localhost:31415`, restarting automatically if it crashes.
   result next to the platform-specific config directory.
 - `common/detect-wolfram.sh` — shared kernel/wstpserver detection, sourced by
   the Linux and macOS install scripts.
-- `systemd/` — Linux, via a `systemd --user` service.
+- `linux/` — Linux, via a `systemd --user` service.
 - `macos/` — macOS, via a per-user `launchd` agent.
 - `windows/` — Windows, via a Scheduled Task (starts at logon, restarts on
   failure).
@@ -33,6 +33,8 @@ on `localhost:31415`, restarting automatically if it crashes.
   starting/stopping, and editing the WSTPServer kernel pool config.
 - `packaging/pyinstaller/` — PyInstaller entry point/spec for native desktop
   bundles.
+- `packaging/installers/` — platform installer builders that install the app
+  and then install the platform WSTPServer service.
 
 ## Install
 
@@ -48,7 +50,7 @@ install locations.
 
 ```sh
 # Linux
-./systemd/install.sh
+./linux/install.sh
 
 # macOS
 ./macos/install.sh
@@ -61,7 +63,7 @@ If auto-detection fails, point the script at your install directly:
 
 ```sh
 # Linux / macOS
-WSTPSERVER_BIN=/path/to/wstpserver KERNEL_BIN=/path/to/WolframKernel ./systemd/install.sh
+WSTPSERVER_BIN=/path/to/wstpserver KERNEL_BIN=/path/to/WolframKernel ./linux/install.sh
 
 # Windows
 .\windows\install.ps1 -WstpServerBin 'C:\path\to\wstpserver.exe' -KernelBin 'C:\path\to\wolfram.exe'
@@ -111,14 +113,44 @@ python -m pip install ".[package]"
 python -m PyInstaller --noconfirm packaging/pyinstaller/wstpserver-tray.spec
 ```
 
-The GitHub Actions workflow in `.github/workflows/build-tray.yml` builds native
-artifacts on `ubuntu-latest`, `macos-latest`, and `windows-latest` and uploads
+The frozen app also exposes service-install hooks for installers and scripted
+setup:
+
+```sh
+WSTPServerManager --install-service
+WSTPServerManager --service-status
+WSTPServerManager --uninstall-service
+```
+
+Build an installer after the PyInstaller bundle is created:
+
+```sh
+# Linux: creates dist/installers/WSTPServerManager-<version>-linux-x86_64.run
+bash packaging/installers/linux/build-installer.sh
+
+# macOS: creates dist/installers/WSTPServerManager-<version>-macos.pkg
+bash packaging/installers/macos/build-pkg.sh
+
+# Windows: creates dist/installers/WSTPServerManager-<version>-windows-x64-setup.exe
+powershell -ExecutionPolicy Bypass -File .\packaging\installers\windows\build-installer.ps1
+```
+
+The Linux installer is a user-level `.run` installer. It installs the app under
+`~/.local/opt/WSTPServerManager`, adds a `wstpserver-manager` launcher and
+desktop entry, and installs the `systemd --user` service. The macOS `.pkg`
+installs the app into `/Applications` and installs the per-user LaunchAgent for
+the logged-in desktop user. The Windows installer uses Inno Setup, installs into
+the current user's LocalAppData programs directory, and registers the Scheduled
+Task.
+
+The GitHub Actions workflow in `.github/workflows/build-tray.yml` builds these
+installers on `ubuntu-latest`, `macos-latest`, and `windows-latest` and uploads
 `WSTPServerManager-*` artifacts.
 
 ## Uninstall
 
 ```sh
-./systemd/uninstall.sh     # add --purge to also remove config/logs
+./linux/uninstall.sh       # add --purge to also remove config/logs
 ./macos/uninstall.sh       # add --purge to also remove config/logs
 .\windows\uninstall.ps1    # add -Purge to also remove config/logs
 ```

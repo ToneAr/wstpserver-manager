@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.gui-scripts]
-wstpserver-tray = "wolfram_pool_tray.app:main"
+wstpserver-tray = "wolfram_pool_tray.cli:main"
 
 [project.optional-dependencies]
 package = [

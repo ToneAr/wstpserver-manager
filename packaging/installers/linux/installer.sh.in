@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_NAME="WSTPServerManager"
+BIN_NAME="wstpserver-manager"
+DESKTOP_ID="dev.local.wstpserver-manager.desktop"
+INSTALL_DIR="${WSTPSERVER_MANAGER_INSTALL_DIR:-$HOME/.local/opt/$APP_NAME}"
+BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+DESKTOP_DIR="$DATA_HOME/applications"
+SKIP_SERVICE=0
+
+usage() {
+    cat <<USAGE
+Usage: $0 [--install-dir PATH] [--skip-service]
+
+Installs $APP_NAME for the current user and installs the systemd --user
+WSTPServer service unless --skip-service is supplied.
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --install-dir)
+            INSTALL_DIR="${2:?missing install directory}"
+            shift 2
+            ;;
+        --skip-service)
+            SKIP_SERVICE=1
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "error: unknown option $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+if [ "$(id -u)" -eq 0 ]; then
+    echo "error: run this installer as the desktop user, not as root." >&2
+    echo "The WSTPServer service is installed as a systemd --user service." >&2
+    exit 1
+fi
+
+payload_line="$(awk '/^__WSTPSERVER_MANAGER_PAYLOAD_BELOW__$/ { print NR + 1; exit 0; }' "$0")"
+if [ -z "$payload_line" ]; then
+    echo "error: installer payload marker not found." >&2
+    exit 1
+fi
+
+tmpdir="$(mktemp -d)"
+cleanup() {
+    rm -rf "$tmpdir"
+}
+trap cleanup EXIT
+
+tail -n +"$payload_line" "$0" | tar -xzf - -C "$tmpdir"
+
+mkdir -p "$(dirname "$INSTALL_DIR")" "$BIN_DIR" "$DESKTOP_DIR"
+rm -rf "$INSTALL_DIR"
+cp -a "$tmpdir/$APP_NAME" "$INSTALL_DIR"
+chmod +x "$INSTALL_DIR/$APP_NAME"
+ln -sf "$INSTALL_DIR/$APP_NAME" "$BIN_DIR/$BIN_NAME"
+
+ICON_PATH="$(find "$INSTALL_DIR" -path '*/wolfram_pool_tray/assets/spikey.svg' -print -quit)"
+if [ -z "$ICON_PATH" ]; then
+    ICON_PATH="$INSTALL_DIR/$APP_NAME"
+fi
+
+cat > "$DESKTOP_DIR/$DESKTOP_ID" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=WSTPServer Manager
+Comment=Manage the Wolfram WSTPServer kernel pool
+Exec="$INSTALL_DIR/$APP_NAME"
+Icon=$ICON_PATH
+Terminal=false
+Categories=Utility;Science;
+StartupNotify=false
+DESKTOP
+
+cat > "$INSTALL_DIR/uninstall.sh" <<UNINSTALL
+#!/usr/bin/env bash
+set -euo pipefail
+"$INSTALL_DIR/$APP_NAME" --uninstall-service || true
+rm -f "$BIN_DIR/$BIN_NAME"
+rm -f "$DESKTOP_DIR/$DESKTOP_ID"
+rm -rf "$INSTALL_DIR"
+echo "Removed $APP_NAME. WSTPServer config and logs were left in place."
+UNINSTALL
+chmod +x "$INSTALL_DIR/uninstall.sh"
+
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true
+fi
+
+if [ "$SKIP_SERVICE" -eq 0 ]; then
+    "$INSTALL_DIR/$APP_NAME" --install-service
+else
+    echo "Skipped WSTPServer service installation."
+fi
+
+echo "Installed $APP_NAME to $INSTALL_DIR"
+echo "Command-line launcher: $BIN_DIR/$BIN_NAME"
+exit 0
+
+__WSTPSERVER_MANAGER_PAYLOAD_BELOW__

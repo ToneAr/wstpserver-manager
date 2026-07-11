@@ -1,3 +1,4 @@
 include README.md
+recursive-include packaging *.in *.iss *.ps1 *.py *.sh *.spec postinstall
 recursive-include src *.py
 recursive-include src/wolfram_pool_tray/assets *.svg

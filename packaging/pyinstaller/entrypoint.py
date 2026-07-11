@@ -1,4 +1,4 @@
-from wolfram_pool_tray.app import main
+from wolfram_pool_tray.cli import main
 
 if __name__ == "__main__":
     raise SystemExit(main())

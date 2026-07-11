@@ -1,0 +1,22 @@
+#!/bin/zsh
+set -e
+set -u
+set -o pipefail
+
+APP_BIN="/Applications/WSTPServerManager.app/Contents/MacOS/WSTPServerManager"
+CONSOLE_USER="$(/usr/bin/stat -f %Su /dev/console)"
+
+if [[ ! -x "$APP_BIN" ]]; then
+    echo "error: expected app executable at $APP_BIN" >&2
+    exit 1
+fi
+
+if [[ -z "$CONSOLE_USER" || "$CONSOLE_USER" == "root" || "$CONSOLE_USER" == "loginwindow" ]]; then
+    echo "error: could not determine the logged-in desktop user for LaunchAgent installation." >&2
+    exit 1
+fi
+
+USER_HOME="$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory | /usr/bin/awk '{print $2}')"
+USER_ID="$(/usr/bin/id -u "$CONSOLE_USER")"
+
+/bin/launchctl asuser "$USER_ID" /usr/bin/sudo -u "$CONSOLE_USER" /usr/bin/env HOME="$USER_HOME" "$APP_BIN" --install-service

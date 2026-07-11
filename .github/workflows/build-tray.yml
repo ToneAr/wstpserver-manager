@@ -32,9 +32,26 @@ jobs:
       - name: Build native app bundle
         run: python -m PyInstaller --noconfirm packaging/pyinstaller/wstpserver-tray.spec
 
+      - name: Install Windows installer tooling
+        if: runner.os == 'Windows'
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Linux installer
+        if: runner.os == 'Linux'
+        run: bash packaging/installers/linux/build-installer.sh
+
+      - name: Build macOS installer
+        if: runner.os == 'macOS'
+        run: bash packaging/installers/macos/build-pkg.sh
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\packaging\installers\windows\build-installer.ps1
+
       - name: Upload artifact
         if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/build')
         uses: actions/upload-artifact@v4
         with:
           name: WSTPServerManager-${{ runner.os }}
-          path: dist/WSTPServerManager
+          path: dist/installers/*
