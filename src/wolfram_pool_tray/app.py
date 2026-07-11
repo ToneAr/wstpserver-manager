@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import sys
 import traceback
 from pathlib import Path
@@ -805,11 +806,21 @@ def _bool_from_config(value: object) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    app = QApplication(argv or sys.argv)
+    raw_argv = list(sys.argv if argv is None or not argv else argv)
+    app_args, start_hidden = _parse_app_args(raw_argv)
+    app = QApplication(app_args)
     app.setApplicationName(APP_NAME)
     app.setWindowIcon(make_icon(False))
     app.setQuitOnLastWindowClosed(False)
     manager = get_service_manager()
-    _, window = build_tray(app, manager)
-    window.show()
+    tray, window = build_tray(app, manager)
+    if not start_hidden or tray is None:
+        window.show()
     return app.exec()
+
+
+def _parse_app_args(argv: list[str]) -> tuple[list[str], bool]:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--start-hidden", "--background", action="store_true")
+    args, qt_args = parser.parse_known_args(argv[1:])
+    return [argv[0], *qt_args], bool(args.start_hidden)

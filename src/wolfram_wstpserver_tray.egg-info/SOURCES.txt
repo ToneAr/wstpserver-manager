@@ -1,6 +1,7 @@
 MANIFEST.in
 README.md
 pyproject.toml
+packaging/installers/install.sh
 packaging/installers/linux/build-installer.sh
 packaging/installers/linux/installer.sh.in
 packaging/installers/macos/build-pkg.sh

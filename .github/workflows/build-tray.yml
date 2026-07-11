@@ -66,12 +66,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Download installer artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: WSTPServerManager-*
           path: release-assets
           merge-multiple: true
+
+      - name: Add bootstrap installer script
+        run: cp packaging/installers/install.sh release-assets/install.sh
 
       - name: Attach installers to GitHub Release
         env:

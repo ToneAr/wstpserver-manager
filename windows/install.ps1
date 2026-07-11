@@ -6,7 +6,8 @@
 [CmdletBinding()]
 param(
     [string]$WstpServerBin,
-    [string]$KernelBin
+    [string]$KernelBin,
+    [string]$TrayAppBin
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +18,8 @@ $LogDir     = Join-Path $env:LOCALAPPDATA "wstpserver\logs"
 $ConfigFile = Join-Path $ConfigDir "wstpserver.conf"
 $LogFile    = Join-Path $LogDir "wstpserver.log"
 $TaskName   = "WolframKernelPool"
+$RunKey     = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$RunValueName = "WSTPServer Manager"
 
 function Find-FirstMatch {
     param([string[]]$Patterns)
@@ -38,6 +41,25 @@ function Find-WstpServerFromKernel {
         if (Test-Path $candidate) { return $candidate }
         $dir = Split-Path -Parent $dir
     }
+    return $null
+}
+
+function Find-TrayApp {
+    param([string]$Candidate)
+    if ($Candidate -and (Test-Path $Candidate)) {
+        return (Resolve-Path $Candidate).Path
+    }
+
+    $installed = Join-Path $env:LOCALAPPDATA "Programs\WSTPServerManager\WSTPServerManager.exe"
+    if (Test-Path $installed) {
+        return $installed
+    }
+
+    $command = Get-Command WSTPServerManager.exe -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
     return $null
 }
 
@@ -116,5 +138,14 @@ Register-ScheduledTask -TaskName $TaskName `
     -Description "Wolfram Kernel Pool (WSTPServer)" | Out-Null
 
 Start-ScheduledTask -TaskName $TaskName
+
+$ResolvedTrayAppBin = Find-TrayApp -Candidate $TrayAppBin
+if ($ResolvedTrayAppBin) {
+    New-Item -Path $RunKey -Force | Out-Null
+    Set-ItemProperty -Path $RunKey -Name $RunValueName -Value "`"$ResolvedTrayAppBin`" --start-hidden"
+    Write-Host "Registered tray app startup: $ResolvedTrayAppBin"
+} else {
+    Write-Host "Tray app not found; skipped tray startup registration."
+}
 
 Write-Host "Done. Check status with: Get-ScheduledTask -TaskName $TaskName"

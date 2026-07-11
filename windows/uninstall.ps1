@@ -13,9 +13,12 @@ $ErrorActionPreference = "Stop"
 $TaskName  = "WolframKernelPool"
 $ConfigDir = Join-Path $env:APPDATA "wstpserver"
 $LogDir    = Join-Path $env:LOCALAPPDATA "wstpserver\logs"
+$RunKey    = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$RunValueName = "WSTPServer Manager"
 
 Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path $RunKey -Name $RunValueName -ErrorAction SilentlyContinue
 
 if ($Purge) {
     Remove-Item -Recurse -Force -Path $ConfigDir -ErrorAction SilentlyContinue

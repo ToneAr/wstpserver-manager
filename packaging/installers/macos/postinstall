@@ -4,6 +4,8 @@ set -u
 set -o pipefail
 
 APP_BIN="/Applications/WSTPServerManager.app/Contents/MacOS/WSTPServerManager"
+APP_BUNDLE="/Applications/WSTPServerManager.app"
+TRAY_LABEL="dev.local.wstpserver-manager.tray"
 CONSOLE_USER="$(/usr/bin/stat -f %Su /dev/console)"
 
 if [[ ! -x "$APP_BIN" ]]; then
@@ -18,5 +20,38 @@ fi
 
 USER_HOME="$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory | /usr/bin/awk '{print $2}')"
 USER_ID="$(/usr/bin/id -u "$CONSOLE_USER")"
+TRAY_PLIST="$USER_HOME/Library/LaunchAgents/$TRAY_LABEL.plist"
 
 /bin/launchctl asuser "$USER_ID" /usr/bin/sudo -u "$CONSOLE_USER" /usr/bin/env HOME="$USER_HOME" "$APP_BIN" --install-service
+
+/bin/mkdir -p "$USER_HOME/Library/LaunchAgents"
+/usr/sbin/chown "$CONSOLE_USER" "$USER_HOME/Library/LaunchAgents"
+/bin/cat > "$TRAY_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$TRAY_LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/open</string>
+        <string>-gj</string>
+        <string>$APP_BUNDLE</string>
+        <string>--args</string>
+        <string>--start-hidden</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+</dict>
+</plist>
+PLIST
+/usr/sbin/chown "$CONSOLE_USER" "$TRAY_PLIST"
+/bin/chmod 0644 "$TRAY_PLIST"
+
+/bin/launchctl bootout "gui/$USER_ID" "$TRAY_PLIST" 2>/dev/null || true
+/bin/launchctl bootstrap "gui/$USER_ID" "$TRAY_PLIST" 2>/dev/null || true
+/bin/launchctl enable "gui/$USER_ID/$TRAY_LABEL" 2>/dev/null || true
+/bin/launchctl kickstart -k "gui/$USER_ID/$TRAY_LABEL" 2>/dev/null || true

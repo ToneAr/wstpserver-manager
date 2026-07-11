@@ -8,6 +8,8 @@ DATA_DIR="$HOME/.local/share/wstpserver"
 UNIT_DIR="$HOME/.config/systemd/user"
 CONFIG_FILE="$CONFIG_DIR/wstpserver.conf"
 LOG_FILE="$DATA_DIR/wstpserver.log"
+AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+AUTOSTART_FILE="$AUTOSTART_DIR/dev.local.wstpserver-manager.desktop"
 
 source "$SCRIPT_DIR/../common/detect-wolfram.sh"
 
@@ -59,6 +61,34 @@ systemctl --user enable --now wstpserver.service
 # Allow the user service to run without an active login session.
 if command -v loginctl >/dev/null 2>&1; then
     loginctl enable-linger "$USER" || true
+fi
+
+TRAY_APP_BIN="${WSTPSERVER_MANAGER_APP_BIN:-}"
+if [ -z "$TRAY_APP_BIN" ]; then
+    for candidate in wstpserver-manager WSTPServerManager wstpserver-tray; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            TRAY_APP_BIN="$(command -v "$candidate")"
+            break
+        fi
+    done
+fi
+
+if [ -n "$TRAY_APP_BIN" ]; then
+    mkdir -p "$AUTOSTART_DIR"
+    cat > "$AUTOSTART_FILE" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=WSTPServer Manager
+Comment=Manage the Wolfram WSTPServer kernel pool
+Exec="$TRAY_APP_BIN" --start-hidden
+Terminal=false
+Categories=Utility;Science;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+DESKTOP
+    echo "Registered tray app startup: $AUTOSTART_FILE"
+else
+    echo "Tray app not found; skipped tray startup registration."
 fi
 
 echo "Done. Check status with: systemctl --user status wstpserver.service"

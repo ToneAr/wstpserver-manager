@@ -1,4 +1,4 @@
-# personal-project-KERNEL-SERVICE
+# WSTPServer Manager
 
 Persistent Wolfram Language Kernel Server Service
 
@@ -108,6 +108,7 @@ setup:
 WSTPServerManager --install-service
 WSTPServerManager --service-status
 WSTPServerManager --uninstall-service
+WSTPServerManager --start-hidden
 ```
 
 Build an installer after the PyInstaller bundle is created:
@@ -124,12 +125,31 @@ powershell -ExecutionPolicy Bypass -File .\packaging\installers\windows\build-in
 ```
 
 The Linux installer is a user-level `.run` installer. It installs the app under
-`~/.local/opt/WSTPServerManager`, adds a `wstpserver-manager` launcher and
-desktop entry, and installs the `systemd --user` service. The macOS `.pkg`
-installs the app into `/Applications` and installs the per-user LaunchAgent for
-the logged-in desktop user. The Windows installer uses Inno Setup, installs into
-the current user's LocalAppData programs directory, and registers the Scheduled
-Task.
+`~/.local/opt/WSTPServerManager`, adds a `wstpserver-manager` launcher, writes
+desktop and XDG autostart entries, and installs the `systemd --user` service.
+The macOS `.pkg` installs the app into `/Applications`, installs the per-user
+WSTPServer LaunchAgent, and writes a per-user LaunchAgent that starts the tray
+app hidden at login. The Windows installer uses Inno Setup, installs into the
+current user's LocalAppData programs directory, registers the Scheduled Task,
+and registers the tray app in the current user's Startup Run key.
+
+For Linux and macOS releases, you can also use the bootstrap installer script:
+
+```sh
+curl -fsSL https://github.com/ToneAr/wstpserver-manager/releases/latest/download/install.sh | sh
+```
+
+Linux installer options can be passed after `sh -s --`:
+
+```sh
+curl -fsSL https://github.com/ToneAr/wstpserver-manager/releases/latest/download/install.sh | sh -s -- --skip-service
+```
+
+To install a specific release tag:
+
+```sh
+curl -fsSL https://github.com/ToneAr/wstpserver-manager/releases/latest/download/install.sh | VERSION=v0.2.1 sh
+```
 
 The GitHub Actions workflow in `.github/workflows/build-tray.yml` builds these
 installers on `ubuntu-latest`, `macos-latest`, and `windows-latest` and uploads

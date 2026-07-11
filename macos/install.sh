@@ -9,6 +9,9 @@ AGENT_DIR="$HOME/Library/LaunchAgents"
 CONFIG_FILE="$CONFIG_DIR/wstpserver.conf"
 LOG_FILE="$LOG_DIR/wstpserver.log"
 PLIST_FILE="$AGENT_DIR/com.wolfram.wstpserver.plist"
+TRAY_LABEL="dev.local.wstpserver-manager.tray"
+TRAY_PLIST_FILE="$AGENT_DIR/$TRAY_LABEL.plist"
+TRAY_APP_BUNDLE="${WSTPSERVER_MANAGER_APP_BUNDLE:-/Applications/WSTPServerManager.app}"
 
 source "$SCRIPT_DIR/../common/detect-wolfram.sh"
 
@@ -54,5 +57,35 @@ echo "Wrote $PLIST_FILE"
 
 launchctl unload "$PLIST_FILE" 2>/dev/null || true
 launchctl load -w "$PLIST_FILE"
+
+if [ -d "$TRAY_APP_BUNDLE" ]; then
+    cat > "$TRAY_PLIST_FILE" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$TRAY_LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/open</string>
+        <string>-gj</string>
+        <string>$TRAY_APP_BUNDLE</string>
+        <string>--args</string>
+        <string>--start-hidden</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+</dict>
+</plist>
+PLIST
+    launchctl unload -w "$TRAY_PLIST_FILE" 2>/dev/null || true
+    launchctl load -w "$TRAY_PLIST_FILE" 2>/dev/null || true
+    echo "Registered tray app startup: $TRAY_PLIST_FILE"
+else
+    echo "Tray app bundle not found at $TRAY_APP_BUNDLE; skipped tray startup registration."
+fi
 
 echo "Done. Check status with: launchctl list | grep com.wolfram.wstpserver"

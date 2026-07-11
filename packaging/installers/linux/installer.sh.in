@@ -8,6 +8,7 @@ INSTALL_DIR="${WSTPSERVER_MANAGER_INSTALL_DIR:-$HOME/.local/opt/$APP_NAME}"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 DESKTOP_DIR="$DATA_HOME/applications"
+AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
 SKIP_SERVICE=0
 
 usage() {
@@ -61,7 +62,7 @@ trap cleanup EXIT
 
 tail -n +"$payload_line" "$0" | tar -xzf - -C "$tmpdir"
 
-mkdir -p "$(dirname "$INSTALL_DIR")" "$BIN_DIR" "$DESKTOP_DIR"
+mkdir -p "$(dirname "$INSTALL_DIR")" "$BIN_DIR" "$DESKTOP_DIR" "$AUTOSTART_DIR"
 rm -rf "$INSTALL_DIR"
 cp -a "$tmpdir/$APP_NAME" "$INSTALL_DIR"
 chmod +x "$INSTALL_DIR/$APP_NAME"
@@ -84,12 +85,26 @@ Categories=Utility;Science;
 StartupNotify=false
 DESKTOP
 
+cat > "$AUTOSTART_DIR/$DESKTOP_ID" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=WSTPServer Manager
+Comment=Manage the Wolfram WSTPServer kernel pool
+Exec="$INSTALL_DIR/$APP_NAME" --start-hidden
+Icon=$ICON_PATH
+Terminal=false
+Categories=Utility;Science;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+DESKTOP
+
 cat > "$INSTALL_DIR/uninstall.sh" <<UNINSTALL
 #!/usr/bin/env bash
 set -euo pipefail
 "$INSTALL_DIR/$APP_NAME" --uninstall-service || true
 rm -f "$BIN_DIR/$BIN_NAME"
 rm -f "$DESKTOP_DIR/$DESKTOP_ID"
+rm -f "$AUTOSTART_DIR/$DESKTOP_ID"
 rm -rf "$INSTALL_DIR"
 echo "Removed $APP_NAME. WSTPServer config and logs were left in place."
 UNINSTALL
@@ -107,6 +122,7 @@ fi
 
 echo "Installed $APP_NAME to $INSTALL_DIR"
 echo "Command-line launcher: $BIN_DIR/$BIN_NAME"
+echo "Desktop autostart entry: $AUTOSTART_DIR/$DESKTOP_ID"
 exit 0
 
 __WSTPSERVER_MANAGER_PAYLOAD_BELOW__

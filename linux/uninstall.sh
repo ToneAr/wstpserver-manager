@@ -6,9 +6,11 @@ set -euo pipefail
 UNIT_DIR="$HOME/.config/systemd/user"
 CONFIG_DIR="$HOME/.config/wstpserver"
 DATA_DIR="$HOME/.local/share/wstpserver"
+AUTOSTART_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/dev.local.wstpserver-manager.desktop"
 
 systemctl --user disable --now wstpserver.service 2>/dev/null || true
 rm -f "$UNIT_DIR/wstpserver.service"
+rm -f "$AUTOSTART_FILE"
 systemctl --user daemon-reload
 
 if [ "${1:-}" = "--purge" ]; then
