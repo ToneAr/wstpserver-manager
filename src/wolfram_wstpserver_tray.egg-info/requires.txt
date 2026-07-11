@@ -2,3 +2,6 @@ PyQt6>=6.6
 
 [package]
 pyinstaller>=6.0
+
+[test]
+pytest>=8
