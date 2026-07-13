@@ -6,15 +6,17 @@ import re
 import sys
 import tempfile
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from PyQt6.QtCore import QPoint, QRect, QSize, QLockFile, Qt, QThread, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QPoint, QRect, QSize, QLockFile, QSettings, Qt, QThread, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QCloseEvent, QDesktopServices, QIcon, QKeySequence, QPainter, QPalette, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -50,13 +52,36 @@ from .config import default_config, first_pool, load_config, pools, save_config,
 from .service import BaseServiceManager, DetectionResult, KernelProcess, ServiceError, get_service_manager
 
 APP_NAME = "WSTPServer Manager"
+APP_ORGANIZATION = "WSTPServer Manager"
+APP_SETTINGS_GROUP = "Application"
 TRAY_ICON_PATH = Path(__file__).with_name("assets") / "spikey.svg"
 KERNEL_TABLE_ROW_HEIGHT = 40
 KERNEL_SIGNAL_BUTTON_HEIGHT = 30
+THEME_SYSTEM = "system"
+THEME_LIGHT = "light"
+THEME_DARK = "dark"
+THEME_OPTIONS = (THEME_SYSTEM, THEME_LIGHT, THEME_DARK)
+ACCENT_SYSTEM = "system"
+ACCENT_PRESETS = (
+    ("System default", ACCENT_SYSTEM),
+    ("Blue", "#3b82f6"),
+    ("Purple", "#8b5cf6"),
+    ("Teal", "#14b8a6"),
+    ("Green", "#22c55e"),
+    ("Orange", "#f97316"),
+    ("Pink", "#ec4899"),
+)
 
-def build_dashboard_style(app: QApplication) -> str:
+
+@dataclass(frozen=True)
+class ApplicationSettings:
+    theme: str = THEME_SYSTEM
+    accent_color: str = ACCENT_SYSTEM
+
+
+def build_dashboard_style(app: QApplication, settings: ApplicationSettings | None = None) -> str:
     palette = app.palette()
-    accent = _system_accent_color(app)
+    accent = _configured_accent_color(app, settings)
 
     window = palette.color(QPalette.ColorRole.Window)
     window_text = palette.color(QPalette.ColorRole.WindowText)
@@ -186,6 +211,7 @@ QFrame#separatorLine {{
     max-height: 1px;
 }}
 """
+
 
 ROOT_BOOLEAN_KEYS = (
     "AllowStealingKernels",
@@ -323,6 +349,82 @@ class OptionalSpinBox(QWidget):
 
     def config_value(self) -> int | None:
         return self.spin.value() if self.enabled_check.isChecked() else None
+
+
+class ApplicationSettingsDialog(QDialog):
+    def __init__(self, settings: ApplicationSettings, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Application Settings")
+        self.setMinimumWidth(420)
+        self.custom_accent = settings.accent_color if _is_hex_color(settings.accent_color) else "#3b82f6"
+
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem("Follow system", THEME_SYSTEM)
+        self.theme_combo.addItem("Light", THEME_LIGHT)
+        self.theme_combo.addItem("Dark", THEME_DARK)
+        self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(settings.theme)))
+
+        self.accent_combo = QComboBox()
+        for label, value in ACCENT_PRESETS:
+            self.accent_combo.addItem(label, value)
+        self.accent_combo.addItem("Custom…", "custom")
+        accent_index = self.accent_combo.findData(settings.accent_color)
+        self.accent_combo.setCurrentIndex(accent_index if accent_index >= 0 else self.accent_combo.findData("custom"))
+        self.accent_combo.currentIndexChanged.connect(self._sync_custom_accent_controls)
+
+        self.custom_accent_button = QPushButton("Choose…")
+        self.custom_accent_button.clicked.connect(self._choose_custom_accent)
+        self.custom_accent_preview = QLabel()
+        self.custom_accent_preview.setFixedSize(28, 28)
+
+        layout = QVBoxLayout(self)
+        description = QLabel("Set the default appearance options for the application.")
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        form = QFormLayout()
+        form.addRow("Theme:", self.theme_combo)
+        accent_row = QWidget()
+        accent_layout = QHBoxLayout(accent_row)
+        accent_layout.setContentsMargins(0, 0, 0, 0)
+        accent_layout.addWidget(self.accent_combo, stretch=1)
+        accent_layout.addWidget(self.custom_accent_preview)
+        accent_layout.addWidget(self.custom_accent_button)
+        form.addRow("Accent color:", accent_row)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self._sync_custom_accent_controls()
+
+    def application_settings(self) -> ApplicationSettings:
+        accent = self.accent_combo.currentData()
+        if accent == "custom":
+            accent = self.custom_accent
+        if not isinstance(accent, str):
+            accent = ACCENT_SYSTEM
+        theme = self.theme_combo.currentData()
+        return ApplicationSettings(theme=theme if theme in THEME_OPTIONS else THEME_SYSTEM, accent_color=_validated_accent(accent))
+
+    def _sync_custom_accent_controls(self) -> None:
+        custom_selected = self.accent_combo.currentData() == "custom"
+        self.custom_accent_button.setEnabled(custom_selected)
+        preview_color = self.custom_accent if custom_selected else self.accent_combo.currentData()
+        if not isinstance(preview_color, str) or preview_color == ACCENT_SYSTEM:
+            app = QApplication.instance()
+            preview_color = _system_accent_color(app if isinstance(app, QApplication) else None)
+        color = QColor(preview_color)
+        self.custom_accent_preview.setStyleSheet(
+            f"background: {color.name()}; border: 1px solid {color.darker(130).name()}; border-radius: 6px;"
+        )
+
+    def _choose_custom_accent(self) -> None:
+        color = QColorDialog.getColor(QColor(self.custom_accent), self, "Choose accent color")
+        if color.isValid():
+            self.custom_accent = color.name()
+            self._sync_custom_accent_controls()
 
 
 class ConfigEditorDialog(QDialog):
@@ -599,10 +701,19 @@ class OperationThread(QThread):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, manager: BaseServiceManager, tray: QSystemTrayIcon | None = None) -> None:
+    def __init__(
+        self,
+        manager: BaseServiceManager,
+        tray: QSystemTrayIcon | None = None,
+        *,
+        app_settings: ApplicationSettings | None = None,
+        apply_app_settings: Callable[[ApplicationSettings], None] | None = None,
+    ) -> None:
         super().__init__()
         self.manager = manager
         self.tray = tray
+        self.app_settings = app_settings or ApplicationSettings()
+        self.apply_app_settings = apply_app_settings
         self.worker: OperationThread | None = None
         self.setWindowTitle(APP_NAME)
         self.resize(920, 720)
@@ -666,6 +777,7 @@ class MainWindow(QMainWindow):
         self.open_log_button = QPushButton("Logs")
         self._apply_button_icons()
 
+        self._build_menu()
         self._build_ui()
         self._connect_signals()
         self.escape_shortcut: QShortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
@@ -678,6 +790,17 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh_status)
         self.timer.start(5000)
+
+    def _build_menu(self) -> None:
+        menu_bar = self.menuBar()
+        if menu_bar is None:
+            return
+        settings_menu = menu_bar.addMenu("Settings")
+        if settings_menu is None:
+            return
+        app_settings_action = QAction("Application Settings…", self)
+        app_settings_action.triggered.connect(self.open_application_settings)
+        settings_menu.addAction(app_settings_action)
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -894,6 +1017,19 @@ class MainWindow(QMainWindow):
             if path == self.manager.paths().config_file:
                 self.load_config_into_form()
             self.refresh_status()
+
+    def open_application_settings(self) -> None:
+        dialog = ApplicationSettingsDialog(self.app_settings, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.app_settings = dialog.application_settings()
+        if self.apply_app_settings is not None:
+            self.apply_app_settings(self.app_settings)
+        else:
+            app = QApplication.instance()
+            if isinstance(app, QApplication):
+                apply_application_settings(app, self.app_settings)
+        self._append_output("Settings", "Saved application settings")
 
     def choose_and_edit_config_file(self) -> None:
         dialog = QFileDialog(self, "Choose or create WSTPServer config", str(self.manager.paths().config_file.parent))
@@ -1183,7 +1319,138 @@ def _caption_label(text: str) -> QLabel:
     return label
 
 
-def _system_accent_color(app: QApplication) -> QColor:
+def load_application_settings(qsettings: QSettings | None = None) -> ApplicationSettings:
+    settings = qsettings or QSettings(APP_ORGANIZATION, APP_NAME)
+    settings.beginGroup(APP_SETTINGS_GROUP)
+    try:
+        theme = str(settings.value("theme", THEME_SYSTEM))
+        accent = str(settings.value("accentColor", ACCENT_SYSTEM))
+    finally:
+        settings.endGroup()
+    return ApplicationSettings(theme=theme if theme in THEME_OPTIONS else THEME_SYSTEM, accent_color=_validated_accent(accent))
+
+
+def save_application_settings(app_settings: ApplicationSettings, qsettings: QSettings | None = None) -> None:
+    settings = qsettings or QSettings(APP_ORGANIZATION, APP_NAME)
+    settings.beginGroup(APP_SETTINGS_GROUP)
+    try:
+        settings.setValue("theme", app_settings.theme)
+        settings.setValue("accentColor", app_settings.accent_color)
+    finally:
+        settings.endGroup()
+    settings.sync()
+
+
+def apply_application_settings(
+    app: QApplication,
+    settings: ApplicationSettings,
+    system_palette: QPalette | None = None,
+    *,
+    persist: bool = True,
+) -> None:
+    if persist:
+        save_application_settings(settings)
+    app.setPalette(_palette_for_settings(settings, system_palette or app.palette()))
+    app.setStyleSheet(build_dashboard_style(app, settings))
+
+
+def _palette_for_settings(settings: ApplicationSettings, system_palette: QPalette) -> QPalette:
+    palette = QPalette(system_palette)
+    if settings.theme == THEME_DARK:
+        _apply_palette_colors(
+            palette,
+            window="#1f2329",
+            window_text="#f4f4f5",
+            base="#15171c",
+            alternate_base="#232833",
+            text="#f4f4f5",
+            button="#2b303a",
+            button_text="#f4f4f5",
+            mid="#566070",
+            placeholder="#9ca3af",
+        )
+    elif settings.theme == THEME_LIGHT:
+        _apply_palette_colors(
+            palette,
+            window="#f6f7fb",
+            window_text="#111827",
+            base="#ffffff",
+            alternate_base="#eef2f7",
+            text="#111827",
+            button="#f3f4f6",
+            button_text="#111827",
+            mid="#c7cdd8",
+            placeholder="#6b7280",
+        )
+
+    accent = _settings_accent_color(settings)
+    if accent is not None:
+        _set_palette_accent(palette, accent)
+    return palette
+
+
+def _apply_palette_colors(
+    palette: QPalette,
+    *,
+    window: str,
+    window_text: str,
+    base: str,
+    alternate_base: str,
+    text: str,
+    button: str,
+    button_text: str,
+    mid: str,
+    placeholder: str,
+) -> None:
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+        palette.setColor(group, QPalette.ColorRole.Window, QColor(window))
+        palette.setColor(group, QPalette.ColorRole.WindowText, QColor(window_text))
+        palette.setColor(group, QPalette.ColorRole.Base, QColor(base))
+        palette.setColor(group, QPalette.ColorRole.AlternateBase, QColor(alternate_base))
+        palette.setColor(group, QPalette.ColorRole.Text, QColor(text))
+        palette.setColor(group, QPalette.ColorRole.Button, QColor(button))
+        palette.setColor(group, QPalette.ColorRole.ButtonText, QColor(button_text))
+        palette.setColor(group, QPalette.ColorRole.Mid, QColor(mid))
+        palette.setColor(group, QPalette.ColorRole.PlaceholderText, QColor(placeholder))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(placeholder))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(placeholder))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(placeholder))
+
+
+def _configured_accent_color(app: QApplication, settings: ApplicationSettings | None) -> QColor:
+    accent = _settings_accent_color(settings or ApplicationSettings())
+    return accent if accent is not None else _system_accent_color(app)
+
+
+def _settings_accent_color(settings: ApplicationSettings) -> QColor | None:
+    if _is_hex_color(settings.accent_color):
+        return QColor(settings.accent_color)
+    return None
+
+
+def _set_palette_accent(palette: QPalette, accent: QColor) -> None:
+    highlighted_text = QColor("#ffffff") if accent.lightness() < 150 else QColor("#111827")
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+        palette.setColor(group, QPalette.ColorRole.Highlight, accent)
+        palette.setColor(group, QPalette.ColorRole.HighlightedText, highlighted_text)
+        palette.setColor(group, QPalette.ColorRole.Link, accent)
+        accent_role = getattr(QPalette.ColorRole, "Accent", None)
+        if accent_role is not None:
+            palette.setColor(group, accent_role, accent)
+
+
+def _validated_accent(value: str) -> str:
+    return QColor(value).name() if _is_hex_color(value) else ACCENT_SYSTEM
+
+
+def _is_hex_color(value: str) -> bool:
+    color = QColor(value)
+    return value.startswith("#") and color.isValid()
+
+
+def _system_accent_color(app: QApplication | None) -> QColor:
+    if app is None or not hasattr(app, "palette"):
+        return QColor("#3b82f6")
     # QPalette.Accent (Qt >= 6.6) is not reliably populated by every platform
     # theme integration (observed stuck at Qt's generic default on KDE via
     # xdg-desktop-portal), while Highlight is consistently wired to the live
@@ -1228,9 +1495,14 @@ def make_icon(running: bool = False) -> QIcon:
     return QIcon(pixmap)
 
 
-def build_tray(app: QApplication, manager: BaseServiceManager) -> tuple[QSystemTrayIcon | None, MainWindow]:
+def build_tray(
+    app: QApplication,
+    manager: BaseServiceManager,
+    app_settings: ApplicationSettings,
+    apply_app_settings: Callable[[ApplicationSettings], None],
+) -> tuple[QSystemTrayIcon | None, MainWindow]:
     tray = QSystemTrayIcon(make_icon(False), app) if QSystemTrayIcon.isSystemTrayAvailable() else None
-    window = MainWindow(manager, tray)
+    window = MainWindow(manager, tray, app_settings=app_settings, apply_app_settings=apply_app_settings)
     if tray:
         menu = QMenu()
         show_action = QAction("Show Manager", menu)
@@ -1246,6 +1518,10 @@ def build_tray(app: QApplication, manager: BaseServiceManager) -> tuple[QSystemT
         restart_action = QAction("Restart WSTPServer", menu)
         restart_action.triggered.connect(lambda: window._run_operation("Restart", manager.restart))
         menu.addAction(restart_action)
+        menu.addSeparator()
+        settings_action = QAction("Application Settings…", menu)
+        settings_action.triggered.connect(window.open_application_settings)
+        menu.addAction(settings_action)
         menu.addSeparator()
         config_menu = QMenu("Configuration", menu)
         menu.addMenu(config_menu)
@@ -1354,15 +1630,22 @@ def main(argv: list[str] | None = None) -> int:
     app_args, start_hidden = _parse_app_args(raw_argv)
     app = QApplication(app_args)
     app.setApplicationName(APP_NAME)
+    app.setOrganizationName(APP_ORGANIZATION)
     app.setWindowIcon(make_icon(False))
+    system_palette = QPalette(app.palette())
+    current_settings = load_application_settings()
+
+    def apply_current_settings(settings: ApplicationSettings) -> None:
+        nonlocal current_settings
+        current_settings = settings
+        apply_application_settings(app, current_settings, system_palette)
 
     def refresh_style(*_args: object) -> None:
-        app.setStyleSheet(build_dashboard_style(app))
+        app.setStyleSheet(build_dashboard_style(app, current_settings))
 
-    refresh_style()
-    app.paletteChanged.connect(refresh_style)
+    apply_application_settings(app, current_settings, system_palette, persist=False)
     style_hints = app.styleHints()
-    if hasattr(style_hints, "colorSchemeChanged"):
+    if style_hints is not None and hasattr(style_hints, "colorSchemeChanged"):
         style_hints.colorSchemeChanged.connect(refresh_style)
 
     instance_lock = QLockFile(str(_instance_lock_path()))
@@ -1373,7 +1656,7 @@ def main(argv: list[str] | None = None) -> int:
 
     app.setQuitOnLastWindowClosed(False)
     manager = get_service_manager()
-    tray, window = build_tray(app, manager)
+    tray, window = build_tray(app, manager, current_settings, apply_current_settings)
     if not start_hidden or tray is None:
         window.show()
     return app.exec()

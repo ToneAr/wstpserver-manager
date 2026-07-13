@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wolfram-wstpserver-tray"
-version = "0.5.0"
+version = "0.5.1"
 description = "PyQt6 tray application for managing Wolfram WSTPServer kernel pools"
 readme = "README.md"
 requires-python = ">=3.10"
