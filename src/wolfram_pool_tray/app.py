@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from PyQt6.QtCore import QPoint, QRect, QSize, QLockFile, QSettings, Qt, QThread, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QCloseEvent, QDesktopServices, QIcon, QKeySequence, QPainter, QPalette, QPixmap, QShortcut
+from PyQt6.QtGui import QAction, QColor, QCloseEvent, QDesktopServices, QIcon, QKeySequence, QMouseEvent, QPainter, QPalette, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -38,7 +38,6 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
-    QSplitter,
     QStyle,
     QSystemTrayIcon,
     QHeaderView,
@@ -206,12 +205,12 @@ QCheckBox::indicator:checked {{
     background: {accent_hex};
     border: 1px solid {accent_focus};
 }}
-QSplitter::handle:vertical {{
+QFrame#sectionResizeHandle {{
     background: {accent_separator};
     margin: 2px 8px;
     border-radius: 2px;
 }}
-QSplitter::handle:vertical:hover {{
+QFrame#sectionResizeHandle:hover {{
     background: {accent_hex};
 }}
 """
@@ -310,6 +309,72 @@ class FlowLayout(QLayout):
             line_height = max(line_height, item_size.height())
 
         return y + line_height - rect.y() + bottom
+
+
+class SectionResizeHandle(QFrame):
+    resize_requested = pyqtSignal(int)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._last_global_y: int | None = None
+        self.setObjectName("sectionResizeHandle")
+        self.setFixedHeight(8)
+        self.setCursor(Qt.CursorShape.SizeVerCursor)
+        self.setMouseTracking(True)
+
+    def mousePressEvent(self, a0: QMouseEvent | None) -> None:
+        if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
+            self._last_global_y = int(a0.globalPosition().y())
+            a0.accept()
+            return
+        super().mousePressEvent(a0)
+
+    def mouseMoveEvent(self, a0: QMouseEvent | None) -> None:
+        if a0 is not None and self._last_global_y is not None and a0.buttons() & Qt.MouseButton.LeftButton:
+            current_y = int(a0.globalPosition().y())
+            self.resize_requested.emit(current_y - self._last_global_y)
+            self._last_global_y = current_y
+            a0.accept()
+            return
+        super().mouseMoveEvent(a0)
+
+    def mouseReleaseEvent(self, a0: QMouseEvent | None) -> None:
+        self._last_global_y = None
+        super().mouseReleaseEvent(a0)
+
+
+class ResizableSection(QWidget):
+    MINIMUM_HEIGHT = 48
+
+    def __init__(self, content: QWidget, initial_height: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        content_minimum = content.minimumSizeHint()
+        if content_minimum.isValid():
+            content.setMinimumSize(content_minimum)
+
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setWidget(content)
+
+        self.resize_handle = SectionResizeHandle()
+        self.resize_handle.resize_requested.connect(self.resize_by)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.scroll_area)
+        layout.addWidget(self.resize_handle)
+        self.setFixedHeight(max(self.MINIMUM_HEIGHT, initial_height))
+
+    def resize_by(self, delta: int) -> None:
+        self.setFixedHeight(max(self.MINIMUM_HEIGHT, self.height() + delta))
+        self.updateGeometry()
+        parent = self.parentWidget()
+        if parent is not None:
+            parent.updateGeometry()
 
 
 class OptionalBooleanCombo(QComboBox):
@@ -813,11 +878,6 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(18, 18, 18, 18)
         root_layout.setSpacing(0)
 
-        self.section_splitter = QSplitter(Qt.Orientation.Vertical)
-        self.section_splitter.setChildrenCollapsible(False)
-        self.section_splitter.setHandleWidth(8)
-        root_layout.addWidget(self.section_splitter)
-
         summary = QGroupBox("Service status")
         summary_layout = QGridLayout(summary)
         summary_layout.setHorizontalSpacing(14)
@@ -839,7 +899,7 @@ class MainWindow(QMainWindow):
         summary_layout.addWidget(_caption_label("Log"), 7, 0)
         summary_layout.addWidget(self.log_path_label, 7, 1)
         summary_layout.setColumnStretch(1, 1)
-        self.section_splitter.addWidget(summary)
+        root_layout.addWidget(summary)
 
         kernels = QGroupBox("Running kernels under WSTPServer")
         kernels_layout = QVBoxLayout(kernels)
@@ -868,7 +928,8 @@ class MainWindow(QMainWindow):
             horizontal_header.setSortIndicatorShown(True)
             horizontal_header.sectionClicked.connect(self._on_kernel_header_clicked)
         kernels_layout.addWidget(self.kernel_processes_table)
-        self.section_splitter.addWidget(kernels)
+        self.kernel_grid_section = ResizableSection(kernels, 220, self)
+        root_layout.addWidget(self.kernel_grid_section)
 
         actions = QWidget()
         actions_layout = FlowLayout(actions, spacing=8)
@@ -881,7 +942,7 @@ class MainWindow(QMainWindow):
             self.refresh_button,
         ):
             actions_layout.addWidget(button)
-        self.section_splitter.addWidget(actions)
+        root_layout.addWidget(actions)
 
         binaries = QGroupBox("Wolfram binaries")
         binaries_layout = QGridLayout(binaries)
@@ -898,7 +959,7 @@ class MainWindow(QMainWindow):
         browse_kernel.clicked.connect(lambda: self._browse_binary(self.kernel_edit))
         binaries_layout.addWidget(browse_kernel, 1, 2)
         binaries_layout.addWidget(self.detect_button, 2, 1)
-        self.section_splitter.addWidget(binaries)
+        root_layout.addWidget(binaries)
 
         pool = QGroupBox("Kernel pool")
         pool_layout = QFormLayout(pool)
@@ -913,14 +974,13 @@ class MainWindow(QMainWindow):
         pool_buttons.addWidget(self.open_config_button)
         pool_buttons.addWidget(self.open_log_button)
         pool_layout.addRow(pool_buttons)
-        self.section_splitter.addWidget(pool)
+        root_layout.addWidget(pool)
 
         output_section = QGroupBox("Operation output")
         output_layout = QVBoxLayout(output_section)
         output_layout.addWidget(self.output)
-        self.section_splitter.addWidget(output_section)
-        self.section_splitter.setStretchFactor(1, 1)
-        self.section_splitter.setStretchFactor(5, 1)
+        root_layout.addWidget(output_section)
+        root_layout.addStretch(1)
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
