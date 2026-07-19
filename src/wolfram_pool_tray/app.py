@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QSplitter,
     QStyle,
     QSystemTrayIcon,
     QHeaderView,
@@ -205,10 +206,13 @@ QCheckBox::indicator:checked {{
     background: {accent_hex};
     border: 1px solid {accent_focus};
 }}
-QFrame#separatorLine {{
-    color: {accent_separator};
+QSplitter::handle:vertical {{
     background: {accent_separator};
-    max-height: 1px;
+    margin: 2px 8px;
+    border-radius: 2px;
+}}
+QSplitter::handle:vertical:hover {{
+    background: {accent_hex};
 }}
 """
 
@@ -807,7 +811,12 @@ class MainWindow(QMainWindow):
         root.setObjectName("dashboardRoot")
         root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(18, 18, 18, 18)
-        root_layout.setSpacing(14)
+        root_layout.setSpacing(0)
+
+        self.section_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.section_splitter.setChildrenCollapsible(False)
+        self.section_splitter.setHandleWidth(8)
+        root_layout.addWidget(self.section_splitter)
 
         summary = QGroupBox("Service status")
         summary_layout = QGridLayout(summary)
@@ -830,7 +839,7 @@ class MainWindow(QMainWindow):
         summary_layout.addWidget(_caption_label("Log"), 7, 0)
         summary_layout.addWidget(self.log_path_label, 7, 1)
         summary_layout.setColumnStretch(1, 1)
-        root_layout.addWidget(summary)
+        self.section_splitter.addWidget(summary)
 
         kernels = QGroupBox("Running kernels under WSTPServer")
         kernels_layout = QVBoxLayout(kernels)
@@ -859,9 +868,10 @@ class MainWindow(QMainWindow):
             horizontal_header.setSortIndicatorShown(True)
             horizontal_header.sectionClicked.connect(self._on_kernel_header_clicked)
         kernels_layout.addWidget(self.kernel_processes_table)
-        root_layout.addWidget(kernels)
+        self.section_splitter.addWidget(kernels)
 
-        actions_layout = FlowLayout(spacing=8)
+        actions = QWidget()
+        actions_layout = FlowLayout(actions, spacing=8)
         for button in (
             self.install_button,
             self.start_button,
@@ -871,7 +881,7 @@ class MainWindow(QMainWindow):
             self.refresh_button,
         ):
             actions_layout.addWidget(button)
-        root_layout.addLayout(actions_layout)
+        self.section_splitter.addWidget(actions)
 
         binaries = QGroupBox("Wolfram binaries")
         binaries_layout = QGridLayout(binaries)
@@ -888,7 +898,7 @@ class MainWindow(QMainWindow):
         browse_kernel.clicked.connect(lambda: self._browse_binary(self.kernel_edit))
         binaries_layout.addWidget(browse_kernel, 1, 2)
         binaries_layout.addWidget(self.detect_button, 2, 1)
-        root_layout.addWidget(binaries)
+        self.section_splitter.addWidget(binaries)
 
         pool = QGroupBox("Kernel pool")
         pool_layout = QFormLayout(pool)
@@ -903,14 +913,14 @@ class MainWindow(QMainWindow):
         pool_buttons.addWidget(self.open_config_button)
         pool_buttons.addWidget(self.open_log_button)
         pool_layout.addRow(pool_buttons)
-        root_layout.addWidget(pool)
+        self.section_splitter.addWidget(pool)
 
-        separator = QFrame()
-        separator.setObjectName("separatorLine")
-        separator.setFrameShape(QFrame.Shape.HLine)
-        root_layout.addWidget(separator)
-        root_layout.addWidget(_caption_label("Operation output"))
-        root_layout.addWidget(self.output, stretch=1)
+        output_section = QGroupBox("Operation output")
+        output_layout = QVBoxLayout(output_section)
+        output_layout.addWidget(self.output)
+        self.section_splitter.addWidget(output_section)
+        self.section_splitter.setStretchFactor(1, 1)
+        self.section_splitter.setStretchFactor(5, 1)
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
